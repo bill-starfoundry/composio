@@ -2038,6 +2038,15 @@ const runParallelToolsExecuteFromParsed = (params: ParsedParallelExecuteArgs) =>
     }
 
     const successful = results.every(result => result.successful);
+
+    // Durable onboarding fact: a batch whose first successful execution is a
+    // parallel run still counts. Flip once on any genuine (non-dry-run)
+    // success, mirroring the single-execute path; `recordOnboardExecuted` is
+    // idempotent so partial success or repeat runs are safe.
+    if (!params.dryRun && results.some(result => result.successful)) {
+      yield* recordOnboardExecuted;
+    }
+
     if (ui) {
       yield* ui.log.message(
         `Parallel execute completed: ${results.filter(result => result.successful).length}/${results.length} successful`
