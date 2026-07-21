@@ -108,10 +108,6 @@ describe('getLocalOnboardNudge', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Persistence helpers (in-memory ComposioCliUserConfig stub)
-// ---------------------------------------------------------------------------
-
 const makeConfigStub = () => {
   let raw = CliUserConfig.make({
     developer: { enabled: true, destructiveActions: false },

@@ -467,11 +467,8 @@ export const runWithConfig = Effect.gen(function* () {
     if (isRootHelp(normalizedArgv)) {
       const helpEffect = printRootHelp(visibility, parseHelpLevel(normalizedArgv[3]) ?? 'default');
       if (args.length > 0) {
-        // Explicit --help always shows the full help.
         return helpEffect;
       }
-      // Bare `composio` with incomplete onboarding: print the single next
-      // command instead of dumping help. Uses local facts only (no network).
       return Effect.gen(function* () {
         const ctx = yield* ComposioUserContext;
         const nudge = getLocalOnboardNudge({

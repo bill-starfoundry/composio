@@ -30,10 +30,6 @@ export type CliUserConfigResolved = {
    * with every prior CLI release).
    */
   readonly security: 'auto' | 'json' | 'keychain-subprocess' | 'keychain';
-  /**
-   * Durable onboarding facts. `hasExecuted` flips to `true` on the first
-   * successful `composio execute` and powers `composio onboard` resumability.
-   */
   readonly onboard: {
     readonly hasExecuted: boolean;
     readonly onboardedAt: string | undefined;

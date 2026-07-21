@@ -1430,8 +1430,6 @@ const runExecuteWithSpinner = (params: {
         }
 
         yield* spinner.stop(`Execution successful${executionSuccessSuffix(result)}`);
-        // Durable onboarding fact: first successful execute flips
-        // `onboard.has_executed` exactly once (no-op afterwards).
         yield* recordOnboardExecuted;
         const inBandWarning = detectInBandWarning(result.data);
         if (inBandWarning) {
@@ -1477,10 +1475,6 @@ const runExecuteWithSpinner = (params: {
     );
   });
 
-/**
- * Shared single-execute core. Reused by `composio onboard` for its
- * first-execution step (`surface: 'root'`, consumer mode) — call, don't fork.
- */
 export const runToolsExecute = (params: RunToolsExecuteParams) =>
   Effect.gen(function* () {
     if (!isLocalToolSlug(params.slug) && !(yield* requireAuth)) return;
@@ -2039,10 +2033,6 @@ const runParallelToolsExecuteFromParsed = (params: ParsedParallelExecuteArgs) =>
 
     const successful = results.every(result => result.successful);
 
-    // Durable onboarding fact: a batch whose first successful execution is a
-    // parallel run still counts. Flip once on any genuine (non-dry-run)
-    // success, mirroring the single-execute path; `recordOnboardExecuted` is
-    // idempotent so partial success or repeat runs are safe.
     if (!params.dryRun && results.some(result => result.successful)) {
       yield* recordOnboardExecuted;
     }
