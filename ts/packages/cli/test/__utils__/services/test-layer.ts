@@ -110,6 +110,8 @@ export interface TestLiveInput {
     linkResponse?: LinkCreateResponse;
     onPatch?: (params: { path: string; body: Record<string, unknown> | undefined }) => void;
     onDelete?: (nanoid: string) => void;
+    /** When true, `connectedAccounts.list` rejects (simulates a transient API failure). */
+    listShouldFail?: boolean;
   };
 
   /**
@@ -1042,6 +1044,9 @@ export const TestLayer = (input?: TestLiveInput) =>
           statuses?: string[];
           limit?: number;
         }) => {
+          if (connectedAccountsData.listShouldFail) {
+            throw new Error('Simulated connected-accounts list failure');
+          }
           let results = [...connectedAccountsData.items];
 
           if (params?.toolkit_slugs && params.toolkit_slugs.length > 0) {

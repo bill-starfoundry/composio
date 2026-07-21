@@ -65,6 +65,22 @@ describe('resolveNextOnboardStep', () => {
       'connect'
     );
   });
+
+  it('a failed connection check does not route to connect (degraded, not unsatisfied)', () => {
+    expect(
+      resolveNextOnboardStep(
+        facts({ loggedIn: true, hasConnection: false, connectionCheckFailed: true })
+      )
+    ).toBeUndefined();
+  });
+
+  it('a known "no connection" still routes to connect when the check succeeded', () => {
+    expect(
+      resolveNextOnboardStep(
+        facts({ loggedIn: true, hasConnection: false, connectionCheckFailed: false })
+      )
+    ).toBe('connect');
+  });
 });
 
 describe('isOnboardComplete', () => {

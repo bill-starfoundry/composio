@@ -22,6 +22,7 @@ export interface OnboardFacts {
   readonly hasConnection: boolean;
   readonly hasExecuted: boolean;
   readonly skippedSteps: ReadonlyArray<string>;
+  readonly connectionCheckFailed?: boolean;
 }
 
 export interface OnboardState extends OnboardFacts {
@@ -44,6 +45,9 @@ export const resolveNextOnboardStep = (facts: OnboardFacts): OnboardGateStep | u
     return skipped.has('login') ? undefined : 'login';
   }
   if (!facts.hasConnection) {
+    if (facts.connectionCheckFailed) {
+      return undefined;
+    }
     return skipped.has('connect') ? undefined : 'connect';
   }
   if (!facts.hasExecuted) {
@@ -118,9 +122,10 @@ export const computeOnboardState = Effect.gen(function* () {
 
   const facts: OnboardFacts = {
     loggedIn,
-    hasConnection: connections.count > 0,
+    hasConnection: connections.count > 0 || (connections.failed && onboard.hasExecuted),
     hasExecuted: onboard.hasExecuted,
     skippedSteps: onboard.skippedSteps,
+    connectionCheckFailed: connections.failed,
   };
 
   return {
