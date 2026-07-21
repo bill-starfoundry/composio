@@ -117,9 +117,8 @@ const nextCommandFor = (
       return { step: 'connect', cmd: `composio onboard --toolkit ${ONBOARD_TASKS[0].toolkit}` };
     case 'execute': {
       const connectedTask = findOnboardTaskForConnectedToolkits(state.connectedToolkits);
-      const toolkit = connectedTask?.toolkit ?? state.connectedToolkits[0];
-      return toolkit
-        ? { step: 'execute', cmd: `composio onboard --toolkit ${toolkit}` }
+      return connectedTask
+        ? { step: 'execute', cmd: `composio onboard --toolkit ${connectedTask.toolkit}` }
         : { step: 'execute', cmd: 'composio search "<what you want to do>"' };
     }
     default:
@@ -135,14 +134,23 @@ const buildStateJson = (params: {
 }): string => {
   const { state, effectiveNextStep } = params;
   const completed = completedGates(state);
-  const skipped = [...new Set([...state.skippedSteps, ...params.invocationSkips])];
-  const remaining = ONBOARD_GATE_STEPS.filter(gate => !completed.includes(gate));
+  const hostPersistentlySkipped = state.skippedSteps.includes('host');
+  const skipped = [
+    ...new Set<OnboardSkippableStep>([
+      ...params.invocationSkips,
+      ...(hostPersistentlySkipped ? (['host'] as const) : []),
+    ]),
+  ];
+  const remaining = ONBOARD_GATE_STEPS.filter(
+    gate => !completed.includes(gate) && !skipped.includes(gate)
+  );
   return JSON.stringify(
     {
       state: stateLabel(state),
       completed,
       remaining,
       skipped,
+      ...(state.skippedSteps.length > 0 ? { persisted_skips: state.skippedSteps } : {}),
       connections: {
         count: state.connectionCount,
         toolkits: state.connectedToolkits,
@@ -562,9 +570,6 @@ const runInteractiveOnboard = (params: {
       resolveNextOnboardStep({ ...state, skippedSteps: [...skips] });
 
     yield* ui.intro('composio onboard');
-    yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STARTED, undefined, {
-      resume_step: params.state.nextStep ?? null,
-    });
 
     const config = yield* ComposioCliUserConfig;
     const hostSkipped = skips.has('host') || config.data.onboard.skippedSteps.includes('host');
@@ -823,6 +828,11 @@ export const onboardCmd = Command.make(
         });
         return;
       }
+
+      yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STARTED, undefined, {
+        resume_step: state.nextStep ?? null,
+        mode: interactive ? 'interactive' : 'non_interactive',
+      });
 
       if (!interactive) {
         return yield* runNonInteractiveOnboard({

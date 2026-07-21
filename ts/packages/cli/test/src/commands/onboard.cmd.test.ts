@@ -217,4 +217,146 @@ describe('CLI: composio onboard (non-interactive contract)', () => {
       })
     );
   });
+
+  layer(
+    TestLive({
+      baseConfigProvider: loggedInConfigProvider,
+      cliUserConfig: { onboardSkippedSteps: ['connect'] },
+    })
+  )('persisted connect skip is a record, not a block', it => {
+    it.scoped(
+      '[Given] persisted connect skip + bare run [Then] connect is not both skipped and next',
+      () =>
+        Effect.gen(function* () {
+          yield* loginTestOrg;
+          yield* cli(['onboard']);
+          const output = (yield* MockConsole.getLines()).join('\n');
+          const state = extractStateJson(output);
+          // persisted skips are a record, not a block: connect is still the next step
+          expect(state.skipped).toEqual([]);
+          expect(state.persisted_skips).toEqual(['connect']);
+          const next = state.next as { step: string } | null;
+          expect(next?.step).toBe('connect');
+          // the contradiction is gone: connect never appears in both skipped and next/remaining
+          expect(state.skipped).not.toContain('connect');
+        })
+    );
+  });
+
+  layer(
+    TestLive({
+      baseConfigProvider: loggedInConfigProvider,
+      cliUserConfig: { onboardSkippedSteps: ['host'] },
+    })
+  )('persisted host skip still reported as skipped', it => {
+    it.scoped('[Given] persisted host skip [Then] host appears in the effective skipped list', () =>
+      Effect.gen(function* () {
+        yield* loginTestOrg;
+        yield* cli(['onboard']);
+        const output = (yield* MockConsole.getLines()).join('\n');
+        const state = extractStateJson(output);
+        expect(state.skipped).toContain('host');
+        expect(state.persisted_skips).toEqual(['host']);
+      })
+    );
+  });
+
+  layer(
+    TestLive({
+      baseConfigProvider: loggedInConfigProvider,
+      connectedAccountsData: {
+        items: [{ ...gmailAccount, id: 'con_sf', toolkit: { slug: 'salesforce' } }],
+      },
+    })
+  )('execute-gate next never recommends a non-curated toolkit', it => {
+    it.scoped(
+      '[Given] only a non-curated connection [Then] next recommends a progressing command',
+      () =>
+        Effect.gen(function* () {
+          yield* loginTestOrg;
+          yield* cli(['onboard']);
+          const output = (yield* MockConsole.getLines()).join('\n');
+          const state = extractStateJson(output);
+          expect(state.state).toBe('connected');
+          const next = state.next as { step: string; cmd: string };
+          expect(next.step).toBe('execute');
+          // must NOT loop by suggesting --toolkit for the non-curated toolkit
+          expect(next.cmd).not.toContain('salesforce');
+          expect(next.cmd).not.toContain('--toolkit');
+          expect(next.cmd).toContain('composio search');
+        })
+    );
+  });
+
+  layer(
+    TestLive({
+      baseConfigProvider: loggedInConfigProvider,
+      connectedAccountsData: {
+        items: [
+          { ...gmailAccount, id: 'con_sf', toolkit: { slug: 'salesforce' } },
+          { ...gmailAccount, id: 'con_gh', toolkit: { slug: 'github' } },
+        ],
+      },
+    })
+  )('execute-gate next prefers a curated connected toolkit', it => {
+    it.scoped(
+      '[Given] a curated connection among non-curated ones [Then] next targets the curated one',
+      () =>
+        Effect.gen(function* () {
+          yield* loginTestOrg;
+          yield* cli(['onboard']);
+          const output = (yield* MockConsole.getLines()).join('\n');
+          const state = extractStateJson(output);
+          const next = state.next as { step: string; cmd: string };
+          expect(next.step).toBe('execute');
+          expect(next.cmd).toBe('composio onboard --toolkit github');
+        })
+    );
+  });
+
+  layer(
+    TestLive({
+      baseConfigProvider: loggedInConfigProvider,
+      cliUserConfig: { onboardHasExecuted: true },
+      connectedAccountsData: { listShouldFail: true },
+    })
+  )('failed connection check with prior completion', it => {
+    it.scoped(
+      '[Given] a transient API failure + prior has_executed [Then] stays complete, never reconnect',
+      () =>
+        Effect.gen(function* () {
+          yield* loginTestOrg;
+          yield* cli(['onboard']);
+          const output = (yield* MockConsole.getLines()).join('\n');
+          const state = extractStateJson(output);
+          expect(state.state).toBe('complete');
+          expect(state.next).toBeNull();
+          expect(state.connections).toMatchObject({ check_failed: true });
+          // must not push a completed user back into connect/OAuth
+          expect(output).not.toContain('"step": "connect"');
+        })
+    );
+  });
+
+  layer(
+    TestLive({
+      baseConfigProvider: loggedInConfigProvider,
+      connectedAccountsData: { listShouldFail: true },
+    })
+  )('failed connection check without prior evidence', it => {
+    it.scoped(
+      '[Given] a transient API failure + no prior completion [Then] signals failure, does not route to connect',
+      () =>
+        Effect.gen(function* () {
+          yield* loginTestOrg;
+          yield* cli(['onboard']);
+          const output = (yield* MockConsole.getLines()).join('\n');
+          const state = extractStateJson(output);
+          expect(state.connections).toMatchObject({ check_failed: true });
+          expect(state.next).toBeNull();
+          const next = state.next as { step: string } | null;
+          expect(next?.step).not.toBe('connect');
+        })
+    );
+  });
 });
