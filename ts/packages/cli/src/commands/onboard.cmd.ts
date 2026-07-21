@@ -210,6 +210,10 @@ const emitStatus = (params: {
       yield* ui.outro("You're all set!");
     } else if (next) {
       yield* ui.outro(`Next: ${next.cmd}`);
+    } else if (state.connectionCheckFailed) {
+      yield* ui.outro(
+        "Couldn't reach the Composio API to check your connections. Check your network and re-run `composio onboard`."
+      );
     } else {
       yield* ui.outro(
         'Nothing to do (remaining steps were skipped). Re-run without --skip to continue.'
@@ -680,7 +684,9 @@ const runInteractiveOnboard = (params: {
 
     if (!state.hasConnection) {
       yield* ui.outro(
-        'Connecting an app was skipped — run `composio onboard` again without `--skip connect` to continue.'
+        state.connectionCheckFailed
+          ? "Couldn't reach the Composio API to check your connections. Check your network and re-run `composio onboard`."
+          : 'Connecting an app was skipped — run `composio onboard` again without `--skip connect` to continue.'
       );
       return;
     }

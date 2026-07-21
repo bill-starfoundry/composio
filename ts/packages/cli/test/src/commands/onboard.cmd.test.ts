@@ -356,6 +356,26 @@ describe('CLI: composio onboard (non-interactive contract)', () => {
           expect(state.next).toBeNull();
           const next = state.next as { step: string } | null;
           expect(next?.step).not.toBe('connect');
+          expect(output).not.toContain('were skipped');
+        })
+    );
+  });
+
+  layer(
+    TestLive({
+      baseConfigProvider: loggedInConfigProvider,
+      connectedAccountsData: { listShouldFail: true },
+    })
+  )('status view on a failed connection check', it => {
+    it.scoped(
+      '[Given] --status + a transient API failure [Then] the outro reports the API failure, not a skip',
+      () =>
+        Effect.gen(function* () {
+          yield* loginTestOrg;
+          yield* cli(['onboard', '--status']);
+          const output = (yield* MockConsole.getLines()).join('\n');
+          expect(output).toContain("Couldn't reach the Composio API");
+          expect(output).not.toContain('were skipped');
         })
     );
   });
