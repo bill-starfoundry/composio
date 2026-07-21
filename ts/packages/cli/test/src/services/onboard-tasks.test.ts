@@ -37,6 +37,34 @@ describe('ONBOARD_TASKS registry', () => {
   });
 });
 
+describe('followUpCreate (opt-in reversible create)', () => {
+  it('is present only on tasks with a natural reversible-create', () => {
+    const withCreate = ONBOARD_TASKS.filter(task => task.followUpCreate).map(task => task.toolkit);
+    expect(withCreate.sort()).toEqual(['github', 'linear']);
+  });
+
+  it('keeps the primary demo a read while the follow-up is a reversible_create', () => {
+    for (const task of ONBOARD_TASKS) {
+      if (!task.followUpCreate) continue;
+      expect(task.demo.kind).toBe('read');
+      expect(task.followUpCreate.kind).toBe('reversible_create');
+    }
+  });
+
+  it('declares a create tool and at least one required arg with a prompt', () => {
+    for (const task of ONBOARD_TASKS) {
+      const followUp = task.followUpCreate;
+      if (!followUp) continue;
+      expect(followUp.toolSlugHint.length).toBeGreaterThan(0);
+      expect(followUp.requiredArgs.length).toBeGreaterThan(0);
+      for (const arg of followUp.requiredArgs) {
+        expect(arg.key.length).toBeGreaterThan(0);
+        expect(arg.prompt.length).toBeGreaterThan(0);
+      }
+    }
+  });
+});
+
 describe('findOnboardTaskByToolkit', () => {
   it('matches case-insensitively and trims', () => {
     expect(findOnboardTaskByToolkit('GitHub ')?.id).toBe('github_profile');

@@ -94,6 +94,29 @@ describe('CLI: composio onboard (non-interactive contract)', () => {
   layer(
     TestLive({
       baseConfigProvider: loggedInConfigProvider,
+      connectedAccountsData: {
+        items: [{ ...gmailAccount, id: 'con_gh', toolkit: { slug: 'github' } }],
+      },
+    })
+  )('drives read, never offers create non-interactively', it => {
+    it.scoped(
+      '[Given] connected + --toolkit github [Then] runs the read demo and never prompts to create',
+      () =>
+        Effect.gen(function* () {
+          yield* loginTestOrg;
+          yield* cli(['onboard', '--toolkit', 'github']);
+          const output = (yield* MockConsole.getLines({ stripAnsi: true })).join('\n');
+          // Read demo executed against the connected app...
+          expect(output).toContain('GITHUB_GET_THE_AUTHENTICATED_USER');
+          // ...and the interactive-only opt-in create is never offered.
+          expect(output).not.toContain('Want to try creating');
+        })
+    );
+  });
+
+  layer(
+    TestLive({
+      baseConfigProvider: loggedInConfigProvider,
       connectedAccountsData: { items: [gmailAccount] },
     })
   )('connected, not executed', it => {

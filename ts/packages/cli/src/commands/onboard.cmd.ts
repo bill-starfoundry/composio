@@ -20,6 +20,7 @@ import {
   FREE_TEXT_TASK_ID,
   matchOnboardTask,
   ONBOARD_TASKS,
+  type OnboardFollowUpCreate,
   type OnboardTask,
 } from 'src/services/onboard-tasks';
 import {
@@ -422,6 +423,82 @@ const demoKindLabel = (kind: OnboardDemo['kind']): string => {
   }
 };
 
+/**
+ * Interactive-only opt-in create after the read demo already completed
+ * onboarding. Prompts for the task's required args and runs the create via
+ * the execute core. A cancelled prompt or a failed create is a soft no-op —
+ * onboarding is already complete, this is a bonus, never a gate. Callers
+ * must only invoke this in an interactive terminal.
+ */
+const offerFollowUpCreate = (params: {
+  readonly ui: TerminalUI;
+  readonly followUp: OnboardFollowUpCreate;
+}) =>
+  Effect.gen(function* () {
+    const { ui, followUp } = params;
+    const wants = yield* ui.confirm(`Want to try creating something? (${followUp.label})`, {
+      defaultValue: false,
+    });
+    if (!wants) {
+      yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STEP_SKIPPED, 'create', { origin: 'prompt' });
+      return;
+    }
+
+    yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STEP_STARTED, 'create', {
+      slug: followUp.toolSlugHint,
+    });
+
+    const args: Record<string, unknown> = { ...(followUp.fixedArgs ?? {}) };
+    for (const arg of followUp.requiredArgs) {
+      const value = yield* ui.text(arg.prompt, { placeholder: arg.placeholder });
+      if (Option.isNone(value)) {
+        yield* ui.log.info('No problem — you can create something later with `composio execute`.');
+        yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STEP_SKIPPED, 'create', {
+          origin: 'missing_arg',
+          arg: arg.key,
+        });
+        return;
+      }
+      args[arg.key] = value.value;
+    }
+
+    yield* ui.log.step(`Creating with ${followUp.toolSlugHint}…`);
+    yield* runToolsExecute({
+      slug: followUp.toolSlugHint,
+      data: Option.some(JSON.stringify(args)),
+      file: Option.none(),
+      account: Option.none(),
+      userId: Option.none(),
+      projectName: Option.none(),
+      surface: 'root',
+      projectMode: 'consumer',
+      getSchema: false,
+      dryRun: false,
+      skipConnectionCheck: false,
+      skipToolParamsCheck: false,
+      skipChecks: false,
+    }).pipe(
+      Effect.tap(() =>
+        Effect.gen(function* () {
+          yield* ui.log.success('Created — remember to close/archive it when you are done.');
+          yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STEP_COMPLETED, 'create', {
+            slug: followUp.toolSlugHint,
+          });
+        })
+      ),
+      // The read already completed onboarding; a failed bonus create must
+      // not fail the command.
+      Effect.catchAll(error =>
+        Effect.gen(function* () {
+          yield* Effect.logDebug('Onboard follow-up create failed:', error);
+          yield* ui.log.warn(
+            'That create did not go through — check the error above and try `composio execute` when ready.'
+          );
+        })
+      )
+    );
+  });
+
 // ---------------------------------------------------------------------------
 // Non-interactive contract
 // ---------------------------------------------------------------------------
@@ -646,8 +723,12 @@ const runInteractiveOnboard = (params: {
 
     // Gate 3 — first real tool execution.
     if (effectiveNext(state) === 'execute') {
+      // When onboarding resumes straight at execute (already connected, no
+      // task chosen this run) derive the task from the connected toolkits so
+      // the read demo and the opt-in create can still be offered.
+      const demoTask = selectedTask ?? findOnboardTaskForConnectedToolkits(state.connectedToolkits);
       const demo = resolveDemo({
-        task: selectedTask,
+        task: demoTask,
         searchSummary,
         connectedToolkits: state.connectedToolkits,
       });
@@ -688,6 +769,14 @@ const runInteractiveOnboard = (params: {
       });
       yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_COMPLETED);
       yield* ui.log.success('Onboarding complete — you just ran your first Composio tool.');
+
+      // Optional interactive-only bonus: offer a reversible create for tasks
+      // that support one. `--yes` skips it (the user asked not to be prompted);
+      // onboarding is already complete either way.
+      if (!params.yes && demoTask?.followUpCreate) {
+        yield* offerFollowUpCreate({ ui, followUp: demoTask.followUpCreate });
+      }
+
       yield* ui.log.info(
         [
           commandHintStep('Find more tools', 'root.search'),

@@ -19,6 +19,31 @@ export interface OnboardTaskDemo {
   readonly sampleArgs: Readonly<Record<string, unknown>>;
 }
 
+/** A single required input prompted interactively for an opt-in create. */
+export interface OnboardFollowUpCreateArg {
+  readonly key: string;
+  readonly prompt: string;
+  readonly placeholder?: string;
+}
+
+/**
+ * Optional, interactive-only follow-up on top of the guaranteed read demo:
+ * a natural reversible-create the user can opt into after the first read
+ * succeeds (e.g. a throwaway GitHub issue they can close). Honors the locked
+ * demo taxonomy — the primary `demo` stays `kind: 'read'`, this bonus is
+ * `kind: 'reversible_create'`. Tasks without a safe reversible-create omit it.
+ */
+export interface OnboardFollowUpCreate {
+  readonly kind: 'reversible_create';
+  /** Short description of what gets created and how to undo it. */
+  readonly label: string;
+  readonly toolSlugHint: string;
+  /** Required inputs prompted interactively, in order. */
+  readonly requiredArgs: ReadonlyArray<OnboardFollowUpCreateArg>;
+  /** Static args merged into every create call. */
+  readonly fixedArgs?: Readonly<Record<string, unknown>>;
+}
+
 export interface OnboardTask {
   readonly id: string;
   readonly label: string;
@@ -26,6 +51,7 @@ export interface OnboardTask {
   readonly authType: 'oauth';
   readonly searchQuery: string;
   readonly demo: OnboardTaskDemo;
+  readonly followUpCreate?: OnboardFollowUpCreate;
 }
 
 /** Menu id for the free-text escape hatch (not a curated task). */
@@ -47,6 +73,20 @@ export const ONBOARD_TASKS: ReadonlyArray<OnboardTask> = [
       kind: 'read',
       toolSlugHint: 'GITHUB_GET_THE_AUTHENTICATED_USER',
       sampleArgs: {},
+    },
+    followUpCreate: {
+      kind: 'reversible_create',
+      label: 'a test GitHub issue you can close right after',
+      toolSlugHint: 'GITHUB_CREATE_AN_ISSUE',
+      requiredArgs: [
+        { key: 'owner', prompt: 'Repository owner (user or org)', placeholder: 'e.g. composiohq' },
+        { key: 'repo', prompt: 'Repository name', placeholder: 'e.g. composio' },
+        {
+          key: 'title',
+          prompt: 'Issue title',
+          placeholder: 'e.g. Test issue from composio onboard',
+        },
+      ],
     },
   },
   {
@@ -83,6 +123,23 @@ export const ONBOARD_TASKS: ReadonlyArray<OnboardTask> = [
       kind: 'read',
       toolSlugHint: 'LINEAR_LIST_LINEAR_ISSUES',
       sampleArgs: {},
+    },
+    followUpCreate: {
+      kind: 'reversible_create',
+      label: 'a test Linear issue you can archive right after',
+      toolSlugHint: 'LINEAR_CREATE_LINEAR_ISSUE',
+      requiredArgs: [
+        {
+          key: 'team_id',
+          prompt: 'Linear team ID',
+          placeholder: 'the team UUID from Linear settings',
+        },
+        {
+          key: 'title',
+          prompt: 'Issue title',
+          placeholder: 'e.g. Test issue from composio onboard',
+        },
+      ],
     },
   },
   {
