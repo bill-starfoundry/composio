@@ -283,7 +283,21 @@ const emitHumanSearchOutput = (params: {
     }
   });
 
-const runToolsSearch = (params: {
+export interface ToolsSearchSummary {
+  /** Slug of the first tool in the first non-empty result. */
+  readonly firstSlug: string | undefined;
+  /** Toolkit of the first tool, when its schema is known. */
+  readonly firstToolkit: string | undefined;
+  /** All rendered tool slugs, in display order. */
+  readonly slugs: ReadonlyArray<string>;
+}
+
+/**
+ * Shared search core, reused by `composio onboard` to resolve a starter
+ * task to concrete tool slugs. Returns a small summary of the rendered
+ * results (or `undefined` when nothing was found / auth is missing).
+ */
+export const runToolsSearch = (params: {
   query: ReadonlyArray<string>;
   toolkits: Option.Option<string>;
   userId: Option.Option<string>;
@@ -424,7 +438,7 @@ const runToolsSearch = (params: {
         yield* ui.log.message('[]');
         yield* ui.output('[]');
       }
-      return;
+      return undefined;
     }
 
     const firstToolsList = resultsWithTools.find(item => item.tools.length > 0)?.tools ?? [];
@@ -487,6 +501,12 @@ const runToolsSearch = (params: {
       yield* ui.log.message(outputJson);
       yield* ui.output(outputJson);
     }
+
+    return {
+      firstSlug,
+      firstToolkit,
+      slugs: resultsWithTools.flatMap(item => item.tools.map(tool => tool.slug)),
+    } satisfies ToolsSearchSummary;
   });
 
 export const toolsCmd$Search = Command.make(

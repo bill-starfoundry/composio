@@ -62,6 +62,7 @@ import {
 } from 'src/services/composio-error-overrides';
 import * as constants from 'src/constants';
 import { ComposioCliUserConfig } from 'src/services/cli-user-config';
+import { recordOnboardExecuted } from 'src/services/onboard-state';
 import { CLI_EXPERIMENTAL_FEATURES } from 'src/constants';
 
 const slug = Args.text({ name: 'slug' }).pipe(
@@ -1429,6 +1430,9 @@ const runExecuteWithSpinner = (params: {
         }
 
         yield* spinner.stop(`Execution successful${executionSuccessSuffix(result)}`);
+        // Durable onboarding fact: first successful execute flips
+        // `onboard.has_executed` exactly once (no-op afterwards).
+        yield* recordOnboardExecuted;
         const inBandWarning = detectInBandWarning(result.data);
         if (inBandWarning) {
           yield* params.ui.log.warn(
@@ -1473,7 +1477,11 @@ const runExecuteWithSpinner = (params: {
     );
   });
 
-const runToolsExecute = (params: RunToolsExecuteParams) =>
+/**
+ * Shared single-execute core. Reused by `composio onboard` for its
+ * first-execution step (`surface: 'root'`, consumer mode) — call, don't fork.
+ */
+export const runToolsExecute = (params: RunToolsExecuteParams) =>
   Effect.gen(function* () {
     if (!isLocalToolSlug(params.slug) && !(yield* requireAuth)) return;
 

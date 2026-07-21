@@ -10,7 +10,7 @@
 
 ### Minor Changes
 
-- a0bef5d: Bump `@composio/client` to `0.1.0-alpha.74`.
+- Add `composio onboard`, the post-install front door: a state-driven, resumable guided setup that takes a fresh install to a first successful tool execution (log in → pick a starter task → connect the app via managed OAuth → execute). Re-running is idempotent — it resumes at the first unsatisfied step and collapses to a status view once everything is set up (`--status` forces the read-only view). Non-interactive invocations never prompt: they emit a JSON description of the current state and the single next command, and `--toolkit`/`--task`/`--yes`/`--skip` let agents drive individual steps. Host plugin wiring reuses `composio setup` opportunistically, bare `composio` now nudges not-yet-onboarded users towards `onboard` instead of dumping help, and `install.sh` advertises `composio onboard` as the first command. The first successful `composio execute` (from anywhere, not just onboarding) records a durable `onboard.has_executed` fact in `~/.composio/config.json`.
 - 025a657: Drop CommonJS entrypoints and publish the TypeScript SDK packages as ESM-only packages. This is a breaking change within the existing 0.x release line: consumers must use Node.js 22.22.3 or newer. CommonJS callers can only rely on Node's native `require(esm)` interop, and the SDK no longer ships custom CommonJS compatibility machinery or `.cjs` artifacts.
 
 ### Patch Changes

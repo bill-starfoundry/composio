@@ -740,7 +740,11 @@ const handleLegacyAuthConfigLink = (params: {
     );
   });
 
-const runConnectedAccountsLink = (params: {
+/**
+ * Shared link core. Reused by `composio onboard` for its connect step
+ * (`rootOnly: true`, toolkit flow) — call, don't fork.
+ */
+export const runConnectedAccountsLink = (params: {
   toolkit: Option.Option<string>;
   authConfig: Option.Option<string>;
   userId: Option.Option<string>;
