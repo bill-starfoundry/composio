@@ -94,10 +94,6 @@ type OnboardEventName =
 const track = (name: OnboardEventName, step?: string, properties?: Record<string, unknown>) =>
   trackCliEventEffect(getOnboardFunnelEvent({ name, step, properties }));
 
-// ---------------------------------------------------------------------------
-// State rendering
-// ---------------------------------------------------------------------------
-
 const stateLabel = (state: OnboardState): string => {
   if (state.complete) return 'complete';
   if (!state.loggedIn) return 'logged_out';
@@ -223,10 +219,6 @@ const emitStatus = (params: {
     }
   });
 
-// ---------------------------------------------------------------------------
-// Host wiring (opportunistic, never a gate)
-// ---------------------------------------------------------------------------
-
 const runHostStep = (params: {
   readonly ui: TerminalUI;
   readonly yes: boolean;
@@ -237,7 +229,6 @@ const runHostStep = (params: {
     const detections = yield* detectSetupTargets('auto');
     const present = detections.filter(detection => detection.available);
     if (present.length === 0) {
-      // No Claude Code / Codex on this machine — the step is N/A.
       return;
     }
     yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STEP_STARTED, 'host', {
@@ -278,7 +269,6 @@ const runHostStep = (params: {
     yield* ui.log.success(`Composio plugin ready for ${names}.`);
     yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STEP_COMPLETED, 'host', { changed: true });
   }).pipe(
-    // Host wiring is opportunistic: any failure degrades to a warning.
     Effect.catchAll(error =>
       Effect.gen(function* () {
         yield* Effect.logDebug('Onboard host wiring failed:', error);
@@ -289,16 +279,9 @@ const runHostStep = (params: {
     )
   );
 
-// ---------------------------------------------------------------------------
-// Task selection
-// ---------------------------------------------------------------------------
-
 interface TaskSelection {
-  /** Curated task, when the selection maps to one. */
   readonly task: OnboardTask | undefined;
-  /** Toolkit known before search (explicit flag or curated task). */
   readonly toolkit: string | undefined;
-  /** Search query used to resolve concrete tools. */
   readonly query: string;
 }
 
@@ -357,10 +340,6 @@ const resolveInteractiveSelection = (params: {
     });
     return Option.isSome(text) ? selectionFromTaskText(text.value) : undefined;
   });
-
-// ---------------------------------------------------------------------------
-// Demo resolution + execution
-// ---------------------------------------------------------------------------
 
 interface OnboardDemo {
   readonly slug: string;
@@ -423,13 +402,6 @@ const demoKindLabel = (kind: OnboardDemo['kind']): string => {
   }
 };
 
-/**
- * Interactive-only opt-in create after the read demo already completed
- * onboarding. Prompts for the task's required args and runs the create via
- * the execute core. A cancelled prompt or a failed create is a soft no-op —
- * onboarding is already complete, this is a bonus, never a gate. Callers
- * must only invoke this in an interactive terminal.
- */
 const offerFollowUpCreate = (params: {
   readonly ui: TerminalUI;
   readonly followUp: OnboardFollowUpCreate;
@@ -486,8 +458,6 @@ const offerFollowUpCreate = (params: {
           });
         })
       ),
-      // The read already completed onboarding; a failed bonus create must
-      // not fail the command.
       Effect.catchAll(error =>
         Effect.gen(function* () {
           yield* Effect.logDebug('Onboard follow-up create failed:', error);
@@ -498,10 +468,6 @@ const offerFollowUpCreate = (params: {
       )
     );
   });
-
-// ---------------------------------------------------------------------------
-// Non-interactive contract
-// ---------------------------------------------------------------------------
 
 const runNonInteractiveOnboard = (params: {
   readonly ui: TerminalUI;
@@ -515,9 +481,10 @@ const runNonInteractiveOnboard = (params: {
   Effect.gen(function* () {
     const { ui, state } = params;
 
-    // Local changes (host wiring) require an explicit --yes when
-    // non-interactive, mirroring `composio setup`'s guard.
-    if (params.yes && !params.invocationSkips.includes('host')) {
+    const config = yield* ComposioCliUserConfig;
+    const hostSkipped =
+      params.invocationSkips.includes('host') || config.data.onboard.skippedSteps.includes('host');
+    if (params.yes && !hostSkipped) {
       yield* runHostStep({ ui, yes: true, interactive: false });
     }
 
@@ -533,8 +500,6 @@ const runNonInteractiveOnboard = (params: {
         task_id: selection.task?.id ?? FREE_TEXT_TASK_ID,
         mode: 'non_interactive',
       });
-      // `--no-wait` semantics: print the OAuth URL as JSON and exit
-      // without blocking on a browser. Re-running onboard resumes.
       return yield* runConnectedAccountsLink({
         toolkit: Option.some(selection.toolkit),
         authConfig: Option.none(),
@@ -548,8 +513,6 @@ const runNonInteractiveOnboard = (params: {
       });
     }
 
-    // Only an explicit `--toolkit`/`--task` selection drives a real
-    // execution non-interactively; a bare invocation stays descriptive.
     if (params.effectiveNextStep === 'execute' && selection?.toolkit) {
       const demo = resolveDemo({
         task: selection.task,
@@ -584,10 +547,6 @@ const runNonInteractiveOnboard = (params: {
     );
   });
 
-// ---------------------------------------------------------------------------
-// Interactive wizard
-// ---------------------------------------------------------------------------
-
 const runInteractiveOnboard = (params: {
   readonly ui: TerminalUI;
   readonly state: OnboardState;
@@ -607,8 +566,6 @@ const runInteractiveOnboard = (params: {
       resume_step: params.state.nextStep ?? null,
     });
 
-    // Opportunistic host wiring. A persisted `--skip host` is honored on
-    // later runs — the user explicitly opted out of local host changes.
     const config = yield* ComposioCliUserConfig;
     const hostSkipped = skips.has('host') || config.data.onboard.skippedSteps.includes('host');
     if (!hostSkipped) {
@@ -617,7 +574,6 @@ const runInteractiveOnboard = (params: {
 
     let state = params.state;
 
-    // Gate 1 — login.
     if (effectiveNext(state) === 'login') {
       yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STEP_STARTED, 'login');
       yield* ui.log.step('Step 1 — log in to Composio');
@@ -643,7 +599,6 @@ const runInteractiveOnboard = (params: {
       return;
     }
 
-    // Gate 2 — connect an app via managed OAuth.
     let selectedTask: OnboardTask | undefined;
     let searchSummary: ToolsSearchSummary | undefined;
     if (effectiveNext(state) === 'connect') {
@@ -675,7 +630,11 @@ const runInteractiveOnboard = (params: {
       }).pipe(
         Effect.catchAll(error =>
           Effect.logDebug('Onboard search failed:', error).pipe(
-            Effect.as<ToolsSearchSummary | undefined>(undefined)
+            Effect.as({
+              firstSlug: undefined,
+              firstToolkit: undefined,
+              slugs: [],
+            } satisfies ToolsSearchSummary)
           )
         )
       );
@@ -721,12 +680,14 @@ const runInteractiveOnboard = (params: {
       return;
     }
 
-    // Gate 3 — first real tool execution.
     if (effectiveNext(state) === 'execute') {
-      // When onboarding resumes straight at execute (already connected, no
-      // task chosen this run) derive the task from the connected toolkits so
-      // the read demo and the opt-in create can still be offered.
-      const demoTask = selectedTask ?? findOnboardTaskForConnectedToolkits(state.connectedToolkits);
+      const flagTask = Option.isSome(params.toolkit)
+        ? selectionFromToolkit(params.toolkit.value).task
+        : Option.isSome(params.task)
+          ? selectionFromTaskText(params.task.value).task
+          : undefined;
+      const demoTask =
+        selectedTask ?? flagTask ?? findOnboardTaskForConnectedToolkits(state.connectedToolkits);
       const demo = resolveDemo({
         task: demoTask,
         searchSummary,
@@ -762,17 +723,12 @@ const runInteractiveOnboard = (params: {
 
       yield* ui.log.step(`Step 3 — run your first tool: ${demo.slug}`);
       yield* executeDemo({ ui, demo });
-      // Reaching this point means the execute core succeeded (it fails the
-      // effect otherwise) and has already flipped `onboard.has_executed`.
       yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STEP_COMPLETED, 'execute', {
         slug: demo.slug,
       });
       yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_COMPLETED);
       yield* ui.log.success('Onboarding complete — you just ran your first Composio tool.');
 
-      // Optional interactive-only bonus: offer a reversible create for tasks
-      // that support one. `--yes` skips it (the user asked not to be prompted);
-      // onboarding is already complete either way.
       if (!params.yes && demoTask?.followUpCreate) {
         yield* offerFollowUpCreate({ ui, followUp: demoTask.followUpCreate });
       }
@@ -792,20 +748,6 @@ const runInteractiveOnboard = (params: {
     );
   });
 
-// ---------------------------------------------------------------------------
-// Command
-// ---------------------------------------------------------------------------
-
-/**
- * `composio onboard` — the post-install front door.
- *
- * State-driven and idempotent: it recomputes onboarding state from durable
- * facts on every run and resumes at the first unsatisfied gate
- * (login → connect → execute). When everything is satisfied it collapses to
- * a compact status view. Non-interactive invocations never prompt: they
- * emit a JSON description of state + next action (or, with
- * `--toolkit`/`--task`, drive the current step without blocking).
- */
 export const onboardCmd = Command.make(
   'onboard',
   { human, json, yes, task, toolkit: toolkitOpt, skip, status: statusOpt },
@@ -832,7 +774,6 @@ export const onboardCmd = Command.make(
       const emitJson = json || !emitHuman;
 
       if (status) {
-        // Forced status view: read-only, never mutates, exit 0.
         const state = yield* computeOnboardState;
         yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STATUS_VIEWED, undefined, {
           complete: state.complete,
@@ -851,7 +792,6 @@ export const onboardCmd = Command.make(
         return;
       }
 
-      // Record explicit skips (funnel distinguishes skip from completion).
       if (invocationSkips.length > 0) {
         const config = yield* ComposioCliUserConfig;
         const alreadySkipped = new Set(config.data.onboard.skippedSteps);
@@ -869,7 +809,6 @@ export const onboardCmd = Command.make(
       });
 
       if (state.complete) {
-        // Idempotent: nothing to do — compact status view, exit 0.
         yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STATUS_VIEWED, undefined, {
           complete: true,
         });

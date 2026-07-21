@@ -284,19 +284,17 @@ const emitHumanSearchOutput = (params: {
   });
 
 export interface ToolsSearchSummary {
-  /** Slug of the first tool in the first non-empty result. */
   readonly firstSlug: string | undefined;
-  /** Toolkit of the first tool, when its schema is known. */
   readonly firstToolkit: string | undefined;
-  /** All rendered tool slugs, in display order. */
   readonly slugs: ReadonlyArray<string>;
 }
 
-/**
- * Shared search core, reused by `composio onboard` to resolve a starter
- * task to concrete tool slugs. Returns a small summary of the rendered
- * results (or `undefined` when nothing was found / auth is missing).
- */
+const EMPTY_SEARCH_SUMMARY: ToolsSearchSummary = {
+  firstSlug: undefined,
+  firstToolkit: undefined,
+  slugs: [],
+};
+
 export const runToolsSearch = (params: {
   query: ReadonlyArray<string>;
   toolkits: Option.Option<string>;
@@ -308,7 +306,7 @@ export const runToolsSearch = (params: {
   rootOnly: boolean;
 }) =>
   Effect.gen(function* () {
-    if (!(yield* requireAuth)) return;
+    if (!(yield* requireAuth)) return EMPTY_SEARCH_SUMMARY;
 
     const ui = yield* TerminalUI;
     const userContext = yield* ComposioUserContext;
@@ -438,7 +436,7 @@ export const runToolsSearch = (params: {
         yield* ui.log.message('[]');
         yield* ui.output('[]');
       }
-      return undefined;
+      return EMPTY_SEARCH_SUMMARY;
     }
 
     const firstToolsList = resultsWithTools.find(item => item.tools.length > 0)?.tools ?? [];

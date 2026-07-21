@@ -86,6 +86,17 @@ describe('matchOnboardTask', () => {
     expect(matchOnboardTask('order a pizza')).toBeUndefined();
     expect(matchOnboardTask('   ')).toBeUndefined();
   });
+
+  it('does not bind on incidental substrings of a toolkit name', () => {
+    expect(matchOnboardTask('notional ideas')).toBeUndefined();
+    expect(matchOnboardTask('nonlinear workflow')).toBeUndefined();
+    expect(matchOnboardTask('githubbed together')).toBeUndefined();
+  });
+
+  it('matches whole-word toolkit mentions with surrounding punctuation', () => {
+    expect(matchOnboardTask('search my notion, please')?.toolkit).toBe('notion');
+    expect(matchOnboardTask('list linear-issues')?.toolkit).toBe('linear');
+  });
 });
 
 describe('findOnboardTaskForConnectedToolkits', () => {

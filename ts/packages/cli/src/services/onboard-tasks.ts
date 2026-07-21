@@ -1,46 +1,22 @@
-/**
- * Curated starter tasks for `composio onboard`.
- *
- * Every curated task targets a Composio managed-OAuth toolkit (one browser
- * click to connect — the CLI never handles API keys). Each task declares
- * whether its demo action is a `read` or a `reversible_create` so the
- * onboarding flow can label the first execution honestly. The demo tool is
- * resolved through `composio search` at runtime; `toolSlugHint` is only a
- * preference among the search results, so a stale hint degrades gracefully.
- */
-
 export type OnboardDemoKind = 'read' | 'reversible_create';
 
 export interface OnboardTaskDemo {
   readonly kind: OnboardDemoKind;
-  /** Preferred tool slug; used when the search results include it. */
   readonly toolSlugHint: string;
-  /** Arguments that make the demo executable without user-specific input. */
   readonly sampleArgs: Readonly<Record<string, unknown>>;
 }
 
-/** A single required input prompted interactively for an opt-in create. */
 export interface OnboardFollowUpCreateArg {
   readonly key: string;
   readonly prompt: string;
   readonly placeholder?: string;
 }
 
-/**
- * Optional, interactive-only follow-up on top of the guaranteed read demo:
- * a natural reversible-create the user can opt into after the first read
- * succeeds (e.g. a throwaway GitHub issue they can close). Honors the locked
- * demo taxonomy — the primary `demo` stays `kind: 'read'`, this bonus is
- * `kind: 'reversible_create'`. Tasks without a safe reversible-create omit it.
- */
 export interface OnboardFollowUpCreate {
   readonly kind: 'reversible_create';
-  /** Short description of what gets created and how to undo it. */
   readonly label: string;
   readonly toolSlugHint: string;
-  /** Required inputs prompted interactively, in order. */
   readonly requiredArgs: ReadonlyArray<OnboardFollowUpCreateArg>;
-  /** Static args merged into every create call. */
   readonly fixedArgs?: Readonly<Record<string, unknown>>;
 }
 
@@ -54,14 +30,8 @@ export interface OnboardTask {
   readonly followUpCreate?: OnboardFollowUpCreate;
 }
 
-/** Menu id for the free-text escape hatch (not a curated task). */
 export const FREE_TEXT_TASK_ID = 'free_text';
 
-/**
- * Curated, OAuth-only starter tasks. Order is the static menu order
- * (most broadly connected toolkits first); there is no live popularity
- * signal available to the CLI, so the order is fixed.
- */
 export const ONBOARD_TASKS: ReadonlyArray<OnboardTask> = [
   {
     id: 'github_profile',
@@ -158,22 +128,18 @@ export const ONBOARD_TASKS: ReadonlyArray<OnboardTask> = [
 
 const normalizeToolkit = (slug: string): string => slug.trim().toLowerCase();
 
-/** Find the curated task for a toolkit slug, if one exists. */
 export const findOnboardTaskByToolkit = (toolkitSlug: string): OnboardTask | undefined =>
   ONBOARD_TASKS.find(task => task.toolkit === normalizeToolkit(toolkitSlug));
 
-/**
- * Match free text against the curated tasks (by toolkit name appearing in
- * the phrase). Returns `undefined` when nothing matches — the caller then
- * treats the text as a free-text search query.
- */
+const tokenize = (text: string): ReadonlySet<string> =>
+  new Set(text.toLowerCase().match(/[a-z0-9]+/g) ?? []);
+
 export const matchOnboardTask = (text: string): OnboardTask | undefined => {
-  const normalized = text.trim().toLowerCase();
-  if (normalized.length === 0) return undefined;
-  return ONBOARD_TASKS.find(task => normalized.includes(task.toolkit));
+  const tokens = tokenize(text);
+  if (tokens.size === 0) return undefined;
+  return ONBOARD_TASKS.find(task => tokens.has(task.toolkit));
 };
 
-/** First curated task whose toolkit appears in the given connected toolkits. */
 export const findOnboardTaskForConnectedToolkits = (
   connectedToolkits: ReadonlyArray<string>
 ): OnboardTask | undefined => {

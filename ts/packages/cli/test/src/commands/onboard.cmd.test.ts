@@ -30,11 +30,6 @@ const gmailAccount: ConnectedAccountItem = {
   test_request_endpoint: '',
 };
 
-/**
- * Parse the last top-level state JSON object in the console output. The
- * state JSON is pretty-printed with 2-space indentation, so it starts with
- * `{\n  "state"` and its closing brace is the only one at column 0.
- */
 const extractStateJson = (output: string): Record<string, unknown> => {
   const candidates = output.match(/\{\n {2}"state"[\s\S]*?\n\}/g) ?? [];
   expect(candidates.length, `no state JSON found in output:\n${output}`).toBeGreaterThan(0);
@@ -91,6 +86,34 @@ describe('CLI: composio onboard (non-interactive contract)', () => {
     );
   });
 
+  layer(TestLive({ baseConfigProvider: loggedInConfigProvider }))('host wiring under --yes', it => {
+    it.scoped('[Given] --yes and no persisted host skip [Then] host wiring runs', () =>
+      Effect.gen(function* () {
+        yield* loginTestOrg;
+        yield* cli(['onboard', '--yes', '--toolkit', 'github']);
+        const output = (yield* MockConsole.getLines({ stripAnsi: true })).join('\n');
+        expect(output).toContain('Agent plugin');
+      })
+    );
+  });
+
+  layer(
+    TestLive({
+      baseConfigProvider: loggedInConfigProvider,
+      cliUserConfig: { onboardSkippedSteps: ['host'] },
+    })
+  )('host wiring honors persisted skip non-interactively', it => {
+    it.scoped('[Given] --yes and a persisted host skip [Then] host wiring is not attempted', () =>
+      Effect.gen(function* () {
+        yield* loginTestOrg;
+        yield* cli(['onboard', '--yes', '--toolkit', 'github']);
+        const output = (yield* MockConsole.getLines({ stripAnsi: true })).join('\n');
+        expect(output).not.toContain('Agent plugin');
+        expect(output).toContain('"status": "pending"');
+      })
+    );
+  });
+
   layer(
     TestLive({
       baseConfigProvider: loggedInConfigProvider,
@@ -106,9 +129,7 @@ describe('CLI: composio onboard (non-interactive contract)', () => {
           yield* loginTestOrg;
           yield* cli(['onboard', '--toolkit', 'github']);
           const output = (yield* MockConsole.getLines({ stripAnsi: true })).join('\n');
-          // Read demo executed against the connected app...
           expect(output).toContain('GITHUB_GET_THE_AUTHENTICATED_USER');
-          // ...and the interactive-only opt-in create is never offered.
           expect(output).not.toContain('Want to try creating');
         })
     );

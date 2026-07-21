@@ -1,5 +1,5 @@
 import { describe, expect, layer } from '@effect/vitest';
-import { ConfigProvider, Effect } from 'effect';
+import { ConfigProvider, Effect, Option } from 'effect';
 import type {
   SessionCreateParams,
   SessionSearchParams,
@@ -8,7 +8,10 @@ import { extendConfigProvider } from 'src/services/config';
 import { cli, TestLive, MockConsole } from 'test/__utils__';
 import type { TestLiveInput } from 'test/__utils__/services/test-layer';
 import type { Tools } from 'src/models/tools';
-import { ToolsSearchInputError } from 'src/commands/tools/commands/tools.search.cmd';
+import {
+  runToolsSearch,
+  ToolsSearchInputError,
+} from 'src/commands/tools/commands/tools.search.cmd';
 
 const testTools: Tools = [
   {
@@ -165,6 +168,23 @@ describe('CLI: composio search', () => {
           const output = lines.join('\n');
 
           expect(output).toContain('[]');
+        })
+      );
+
+      it.scoped('runToolsSearch returns a consistent empty summary, not undefined', () =>
+        Effect.gen(function* () {
+          const summary = yield* runToolsSearch({
+            query: ['nonexistent_query'],
+            toolkits: Option.none(),
+            userId: Option.none(),
+            projectName: Option.none(),
+            limit: 5,
+            json: true,
+            human: false,
+            rootOnly: true,
+          });
+
+          expect(summary).toEqual({ firstSlug: undefined, firstToolkit: undefined, slugs: [] });
         })
       );
     }
