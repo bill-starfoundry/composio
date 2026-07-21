@@ -30,7 +30,42 @@ export const CLI_ANALYTICS_EVENTS = {
   CLI_TOOL_INVOCATION_VALIDATION_FAILED: 'CLI_TOOL_INVOCATION_VALIDATION_FAILED',
   CLI_TOOL_INVOCATION_TOOL_NOT_FOUND: 'CLI_TOOL_INVOCATION_TOOL_NOT_FOUND',
   CLI_TOOL_INVOCATION_FAILED: 'CLI_TOOL_INVOCATION_FAILED',
+  CLI_ONBOARD_STARTED: 'CLI_ONBOARD_STARTED',
+  CLI_ONBOARD_STEP_STARTED: 'CLI_ONBOARD_STEP_STARTED',
+  CLI_ONBOARD_STEP_COMPLETED: 'CLI_ONBOARD_STEP_COMPLETED',
+  CLI_ONBOARD_STEP_SKIPPED: 'CLI_ONBOARD_STEP_SKIPPED',
+  CLI_ONBOARD_COMPLETED: 'CLI_ONBOARD_COMPLETED',
+  CLI_ONBOARD_STATUS_VIEWED: 'CLI_ONBOARD_STATUS_VIEWED',
 } as const;
+
+export type CliOnboardEventName =
+  | typeof CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STARTED
+  | typeof CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STEP_STARTED
+  | typeof CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STEP_COMPLETED
+  | typeof CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STEP_SKIPPED
+  | typeof CLI_ANALYTICS_EVENTS.CLI_ONBOARD_COMPLETED
+  | typeof CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STATUS_VIEWED;
+
+/**
+ * Onboard funnel events. The underlying login/link/execute steps reuse the
+ * existing `CLI_LOGIN_*` / `CLI_LINK_*` / `CLI_EXECUTE_*` families emitted by
+ * the shared command cores; these events only add the funnel skeleton
+ * (`step` property distinguishes step-level events; skips are recorded
+ * separately from completions).
+ */
+export const getOnboardFunnelEvent = (params: {
+  readonly name: CliOnboardEventName;
+  readonly step?: string;
+  readonly properties?: Record<string, unknown>;
+}): TrackEvent => ({
+  name: params.name,
+  properties: {
+    source: 'cli',
+    invocation_origin: getInvocationOrigin(),
+    ...(params.step === undefined ? {} : { step: params.step }),
+    ...(params.properties ?? {}),
+  },
+});
 
 const KNOWN_COMMAND_TOKENS = new Set([
   'version',
@@ -38,6 +73,7 @@ const KNOWN_COMMAND_TOKENS = new Set([
   'whoami',
   'login',
   'logout',
+  'onboard',
   'run',
   'install',
   'dev',

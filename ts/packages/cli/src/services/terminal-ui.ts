@@ -1,6 +1,6 @@
 import process from 'node:process';
 import * as p from '@clack/prompts';
-import { Context, Effect, Exit, Layer } from 'effect';
+import { Context, Effect, Exit, Layer, Option } from 'effect';
 
 export type TtyLikeStream = {
   readonly isTTY?: boolean;
@@ -123,6 +123,16 @@ export interface TerminalUI {
   ) => Effect.Effect<boolean>;
 
   /**
+   * Ask the user for a line of free text.
+   * Returns `Option.none()` when the prompt is cancelled, or in
+   * non-interactive mode when no `defaultValue` is provided.
+   */
+  readonly text: (
+    message: string,
+    options?: { readonly placeholder?: string; readonly defaultValue?: string }
+  ) => Effect.Effect<Option.Option<string>>;
+
+  /**
    * Present a single-select list to the user.
    * In non-interactive mode (piped), returns the first option's value.
    */
@@ -243,6 +253,24 @@ const makeLive: TerminalUI = {
     Effect.sync(() =>
       decorate(() => p.note(message, title ?? '', { format: line => line, output: process.stderr }))
     ),
+
+  text: (message, options) =>
+    canPrompt
+      ? Effect.promise(async () => {
+          const result = await p.text({
+            message,
+            placeholder: options?.placeholder,
+            defaultValue: options?.defaultValue,
+            output: process.stderr,
+          });
+          // p.text returns string | symbol (symbol on cancel)
+          if (typeof result !== 'string') return Option.fromNullable(options?.defaultValue);
+          const trimmed = result.trim();
+          return trimmed.length > 0
+            ? Option.some(trimmed)
+            : Option.fromNullable(options?.defaultValue);
+        })
+      : Effect.succeed(Option.fromNullable(options?.defaultValue)),
 
   select: ((
     message: string,

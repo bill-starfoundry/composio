@@ -1,4 +1,4 @@
-import { Schema } from 'effect';
+import { Option, Schema } from 'effect';
 import { OptionFromNullishOr } from 'effect/Schema';
 import { JSONTransformSchema } from './utils/json-transform-schema';
 
@@ -47,6 +47,29 @@ export const DeveloperConfig = Schema.Struct({
 });
 export type DeveloperConfig = Schema.Schema.Type<typeof DeveloperConfig>;
 
+/**
+ * Durable onboarding facts persisted in `~/.composio/config.json`.
+ *
+ * `has_executed` is the only onboarding gate that has no other durable
+ * source of truth (login state lives in `user_data.json`, connections
+ * live server-side). It flips to `true` on the first successful
+ * `composio execute` and never flips back. `skipped_steps` records
+ * steps the user explicitly skipped via `composio onboard --skip` so
+ * the funnel can distinguish skip from completion.
+ */
+export const OnboardRecord = Schema.Struct({
+  hasExecuted: Schema.optionalWith(Schema.Boolean, {
+    default: () => false,
+  }).pipe(Schema.fromKey('has_executed')),
+  onboardedAt: Schema.propertySignature(OptionFromNullishOr(Schema.String, null)).pipe(
+    Schema.fromKey('onboarded_at')
+  ),
+  skippedSteps: Schema.optionalWith(Schema.Array(Schema.String), {
+    default: (): ReadonlyArray<string> => [],
+  }).pipe(Schema.fromKey('skipped_steps')),
+});
+export type OnboardRecord = Schema.Schema.Type<typeof OnboardRecord>;
+
 export const CliUserConfig = Schema.Struct({
   developer: Schema.optionalWith(DeveloperConfig, {
     default: () =>
@@ -77,6 +100,17 @@ export const CliUserConfig = Schema.Struct({
    */
   security: Schema.optionalWith(SecurityBackend, {
     default: (): SecurityBackend => 'auto',
+  }),
+  /**
+   * Onboarding funnel facts. See {@link OnboardRecord}.
+   */
+  onboard: Schema.optionalWith(OnboardRecord, {
+    default: () =>
+      OnboardRecord.make({
+        hasExecuted: false,
+        onboardedAt: Option.none(),
+        skippedSteps: [],
+      }),
   }),
 }).annotations({
   identifier: 'CliUserConfig',

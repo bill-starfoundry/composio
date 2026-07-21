@@ -130,6 +130,8 @@ export interface TestLiveInput {
     developerModeEnabled?: boolean;
     developerDangerousCommandsEnabled?: boolean;
     experimentalFeatures?: Record<string, boolean>;
+    onboardHasExecuted?: boolean;
+    onboardSkippedSteps?: ReadonlyArray<string>;
   };
 
   /**
@@ -822,6 +824,11 @@ export const TestLayer = (input?: TestLiveInput) =>
       artifactDirectory: Option.none(),
       experimentalSubagent: Option.none(),
       security: 'auto',
+      onboard: {
+        hasExecuted: input?.cliUserConfig?.onboardHasExecuted ?? false,
+        onboardedAt: Option.none(),
+        skippedSteps: input?.cliUserConfig?.onboardSkippedSteps ?? [],
+      },
     });
 
     const ComposioCliUserConfigTest = Layer.succeed(
@@ -836,6 +843,11 @@ export const TestLayer = (input?: TestLiveInput) =>
             artifactDirectory: Option.getOrUndefined(rawCliUserConfig.artifactDirectory),
             experimentalSubagentTarget: 'auto' as const,
             security: 'auto' as const,
+            onboard: {
+              hasExecuted: rawCliUserConfig.onboard.hasExecuted,
+              onboardedAt: Option.getOrUndefined(rawCliUserConfig.onboard.onboardedAt),
+              skippedSteps: rawCliUserConfig.onboard.skippedSteps,
+            },
           };
         },
         get raw() {

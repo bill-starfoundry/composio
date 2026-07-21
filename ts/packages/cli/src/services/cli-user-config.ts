@@ -30,6 +30,15 @@ export type CliUserConfigResolved = {
    * with every prior CLI release).
    */
   readonly security: 'auto' | 'json' | 'keychain-subprocess' | 'keychain';
+  /**
+   * Durable onboarding facts. `hasExecuted` flips to `true` on the first
+   * successful `composio execute` and powers `composio onboard` resumability.
+   */
+  readonly onboard: {
+    readonly hasExecuted: boolean;
+    readonly onboardedAt: string | undefined;
+    readonly skippedSteps: ReadonlyArray<string>;
+  };
 };
 
 const detectReleaseChannel = (version: string): CliReleaseChannel =>
@@ -98,6 +107,11 @@ const resolveConfig = (raw: CliUserConfig, channel: CliReleaseChannel): CliUserC
     onSome: value => value.target,
   }),
   security: raw.security,
+  onboard: {
+    hasExecuted: raw.onboard.hasExecuted,
+    onboardedAt: Option.getOrUndefined(raw.onboard.onboardedAt),
+    skippedSteps: raw.onboard.skippedSteps,
+  },
 });
 
 export const ComposioCliUserConfigLive = Layer.effect(

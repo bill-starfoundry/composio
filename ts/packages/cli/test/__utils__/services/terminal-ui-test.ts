@@ -1,4 +1,4 @@
-import { Console, Effect, Exit, Layer } from 'effect';
+import { Console, Effect, Exit, Layer, Option } from 'effect';
 import { TerminalUI } from 'src/services/terminal-ui';
 
 /**
@@ -33,6 +33,8 @@ export const TerminalUITest = Layer.succeed(
     },
 
     note: (message, title) => Console.log(title ? `[${title}] ${message}` : message),
+
+    text: (_message, options) => Effect.succeed(Option.fromNullable(options?.defaultValue)),
 
     select: (_message, options) => Effect.succeed(options[0].value),
 
