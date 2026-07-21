@@ -25,7 +25,7 @@ import {
 } from 'src/services/connected-account-selection';
 import { ComposioCliUserConfig } from 'src/services/cli-user-config';
 import { CLI_EXPERIMENTAL_FEATURES } from 'src/constants';
-import { decodeConnectedAccountItemsWithFallback } from 'src/effects/decode-connected-account-list';
+import { decodeConnectedAccountItems } from 'src/effects/decode-connected-account-list';
 
 class ConnectionPollingError extends Data.TaggedError('commands/ConnectionPollingError')<{
   readonly message: string;
@@ -489,7 +489,7 @@ const handleListConnectedAccounts = (params: {
           }),
       })
     );
-    const connectedAccounts = yield* decodeConnectedAccountItemsWithFallback(accounts.items).pipe(
+    const connectedAccounts = yield* decodeConnectedAccountItems(accounts.items).pipe(
       Effect.mapError(
         cause =>
           new ConnectedAccountsDecodeError({

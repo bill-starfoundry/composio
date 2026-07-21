@@ -1,13 +1,12 @@
 import type { ConnectedAccountItem } from 'src/models/connected-accounts';
 import { Schema } from 'effect';
 
-// `ConnectedAccountItem` widened with an `'UNKNOWN'` sentinel for statuses
-// the closed schema doesn't yet know about. Selection only picks `'ACTIVE'`,
-// so unknown rows still drop out — but without falsely labeling them
+// `status` is an open enum, so this is shape-identical to
+// `ConnectedAccountItem`; tool-router rows normalize statuses outside the
+// known set to an `'UNKNOWN'` sentinel. Selection only picks `'ACTIVE'`, so
+// unknown rows still drop out — but without falsely labeling them
 // `'INACTIVE'` (= user-disabled).
-export type SelectableConnectedAccount = Omit<ConnectedAccountItem, 'status'> & {
-  readonly status: ConnectedAccountItem['status'] | 'UNKNOWN';
-};
+export type SelectableConnectedAccount = ConnectedAccountItem;
 
 export const CachedConnectedAccountSummarySchema = Schema.Struct({
   id: Schema.String,

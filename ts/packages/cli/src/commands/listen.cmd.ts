@@ -25,7 +25,7 @@ import { ComposioCliUserConfig } from 'src/services/cli-user-config';
 import { CLI_EXPERIMENTAL_FEATURES } from 'src/constants';
 import { matchesTriggerListenFilters } from './triggers/filter';
 import { parseTriggerListenEvent } from './triggers/parse';
-import { decodeConnectedAccountItemsWithFallback } from 'src/effects/decode-connected-account-list';
+import { decodeConnectedAccountItems } from 'src/effects/decode-connected-account-list';
 
 type TriggerCreateParams = NonNullable<
   Parameters<RawComposioClient['triggerInstances']['upsert']>[1]
@@ -179,9 +179,7 @@ const resolveConnectedAccountIdForTrigger = (params: {
           cause,
         }),
     });
-    const selectableAccounts = yield* decodeConnectedAccountItemsWithFallback(
-      connectedAccounts.items
-    ).pipe(
+    const selectableAccounts = yield* decodeConnectedAccountItems(connectedAccounts.items).pipe(
       Effect.mapError(
         cause =>
           new ListenCommandError({
