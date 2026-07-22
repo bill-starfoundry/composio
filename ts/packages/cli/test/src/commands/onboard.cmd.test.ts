@@ -140,6 +140,28 @@ describe('CLI: composio onboard (non-interactive contract)', () => {
       baseConfigProvider: loggedInConfigProvider,
       connectedAccountsData: { items: [gmailAccount] },
     })
+  )('named toolkit not connected routes to connect, never executes unlinked', it => {
+    it.scoped(
+      '[Given] gmail connected + --toolkit github [Then] connects github, never runs a github tool',
+      () =>
+        Effect.gen(function* () {
+          yield* loginTestOrg;
+          yield* cli(['onboard', '--toolkit', 'github']);
+          const output = (yield* MockConsole.getLines({ stripAnsi: true })).join('\n');
+          // routes to connect the named (unconnected) toolkit
+          expect(output).toContain('"status": "pending"');
+          expect(output).toContain('"toolkit": "github"');
+          // must NOT execute a github tool against an unlinked account
+          expect(output).not.toContain('GITHUB_GET_THE_AUTHENTICATED_USER');
+        })
+    );
+  });
+
+  layer(
+    TestLive({
+      baseConfigProvider: loggedInConfigProvider,
+      connectedAccountsData: { items: [gmailAccount] },
+    })
   )('connected, not executed', it => {
     it.scoped(
       '[Given] a connection [Then] next step is execute pointing at the connected app',
@@ -356,6 +378,11 @@ describe('CLI: composio onboard (non-interactive contract)', () => {
           expect(state.next).toBeNull();
           const next = state.next as { step: string } | null;
           expect(next?.step).not.toBe('connect');
+          // an unknown connection is never listed as actionable/skipped
+          expect(state.remaining).not.toContain('connect');
+          expect(state.remaining).not.toContain('execute');
+          expect(state.skipped).not.toContain('connect');
+          expect(state.skipped).not.toContain('execute');
           expect(output).not.toContain('were skipped');
         })
     );
