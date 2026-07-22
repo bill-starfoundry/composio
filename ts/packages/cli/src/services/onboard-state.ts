@@ -11,8 +11,8 @@ import { decodeConnectedAccountItemsWithFallback } from 'src/effects/decode-conn
 export const ONBOARD_GATE_STEPS = ['login', 'connect', 'execute'] as const;
 export type OnboardGateStep = (typeof ONBOARD_GATE_STEPS)[number];
 
-export const ONBOARD_SKIPPABLE_STEPS = ['host', ...ONBOARD_GATE_STEPS] as const;
-export type OnboardSkippableStep = (typeof ONBOARD_SKIPPABLE_STEPS)[number];
+export const ONBOARD_SKIPPABLE_STEPS = ONBOARD_GATE_STEPS;
+export type OnboardSkippableStep = OnboardGateStep;
 
 export const isOnboardSkippableStep = (value: string): value is OnboardSkippableStep =>
   ONBOARD_SKIPPABLE_STEPS.some(step => step === value);
@@ -66,9 +66,6 @@ export interface OnboardResolution {
   readonly connectionUnknown: boolean;
 }
 
-const isGateStep = (value: string): value is OnboardGateStep =>
-  ONBOARD_GATE_STEPS.some(step => step === value);
-
 const gateSatisfied = (facts: OnboardFacts, gate: OnboardGateStep): boolean =>
   gate === 'login' ? facts.loggedIn : gate === 'connect' ? facts.hasConnection : facts.hasExecuted;
 
@@ -78,11 +75,7 @@ export const resolveOnboard = (params: {
 }): OnboardResolution => {
   const { facts } = params;
   const persistedSkips = facts.skippedSteps.filter(isOnboardSkippableStep);
-  const hostSkipped = params.invocationSkips.includes('host') || persistedSkips.includes('host');
-  const effectiveSkips = new Set<OnboardSkippableStep>([
-    ...params.invocationSkips,
-    ...(hostSkipped ? (['host'] as const) : []),
-  ]);
+  const effectiveSkips = new Set<OnboardSkippableStep>(params.invocationSkips);
   const connectionUnknown = Boolean(facts.connectionCheckFailed) && !facts.hasConnection;
   const isUnresolvableGate = (gate: OnboardGateStep): boolean =>
     connectionUnknown && gate !== 'login';
@@ -97,11 +90,9 @@ export const resolveOnboard = (params: {
     remaining.push(gate);
   }
 
-  const skipped = [...effectiveSkips].filter(step => {
-    if (!isGateStep(step)) return true;
-    if (completed.includes(step)) return false;
-    return !isUnresolvableGate(step);
-  });
+  const skipped = [...effectiveSkips].filter(
+    step => !completed.includes(step) && !isUnresolvableGate(step)
+  );
 
   return {
     completed,

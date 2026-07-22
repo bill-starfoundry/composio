@@ -1,5 +1,5 @@
 import { Command, HelpDoc, Options, ValidationError } from '@effect/cli';
-import { Effect, Option, Predicate } from 'effect';
+import { Effect, Option } from 'effect';
 import { TerminalUI } from 'src/services/terminal-ui';
 import { ComposioUserContext } from 'src/services/user-context';
 import { ComposioCliUserConfig } from 'src/services/cli-user-config';
@@ -20,15 +20,10 @@ import {
   FREE_TEXT_TASK_ID,
   matchOnboardTask,
   ONBOARD_TASKS,
+  type OnboardExecuteSummarizer,
   type OnboardFollowUpCreate,
   type OnboardTask,
 } from 'src/services/onboard-tasks';
-import {
-  detectSetupTargets,
-  inspectSetupTargets,
-  installSetupTargets,
-  isSetupReady,
-} from 'src/services/setup';
 import { browserLogin } from 'src/commands/login.cmd';
 import {
   runToolsSearch,
@@ -36,6 +31,7 @@ import {
 } from 'src/commands/tools/commands/tools.search.cmd';
 import { runConnectedAccountsLink } from 'src/commands/connected-accounts/commands/connected-accounts.link.cmd';
 import { runToolsExecute } from 'src/commands/tools/commands/tools.execute.cmd';
+import type { ToolExecuteResponse } from 'src/services/tools-executor';
 import { CLI_ANALYTICS_EVENTS, getOnboardFunnelEvent } from 'src/analytics/events';
 import { trackCliEventEffect } from 'src/analytics/dispatch';
 import { commandHintStep } from 'src/services/command-hints';
@@ -53,7 +49,7 @@ const json = Options.boolean('json').pipe(
 const yes = Options.boolean('yes').pipe(
   Options.withAlias('y'),
   Options.withDefault(false),
-  Options.withDescription('Accept prompts (org picker, host wiring, demo run) without asking')
+  Options.withDescription('Accept prompts (org picker, demo run) without asking')
 );
 
 const task = Options.text('task').pipe(
@@ -79,9 +75,6 @@ const statusOpt = Options.boolean('status').pipe(
 );
 
 const invalidOptionValue = (message: string) => ValidationError.invalidValue(HelpDoc.p(message));
-
-const errorMessage = (error: unknown): string =>
-  Predicate.isError(error) ? error.message : String(error);
 
 type OnboardEventName =
   | typeof CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STARTED
@@ -223,66 +216,6 @@ const emitStatus = (params: {
     }
   });
 
-const runHostStep = (params: {
-  readonly ui: TerminalUI;
-  readonly yes: boolean;
-  readonly interactive: boolean;
-}) =>
-  Effect.gen(function* () {
-    const { ui } = params;
-    const detections = yield* detectSetupTargets('auto');
-    const present = detections.filter(detection => detection.available);
-    if (present.length === 0) {
-      return;
-    }
-    yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STEP_STARTED, 'host', {
-      hosts: present.map(detection => detection.target),
-    });
-
-    const supported = detections.filter(detection => detection.available && detection.supported);
-    if (supported.length === 0) {
-      const reason = present
-        .map(detection => detection.unsupportedReason)
-        .filter((message): message is string => Boolean(message))
-        .join(' ');
-      yield* ui.log.warn(`Agent plugin setup skipped. ${reason}`.trim());
-      yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STEP_SKIPPED, 'host', {
-        origin: 'unsupported',
-      });
-      return;
-    }
-
-    const inspected = yield* inspectSetupTargets(detections);
-    const pending = inspected.filter(status => !isSetupReady(status));
-    if (pending.length === 0) {
-      yield* ui.log.success('Agent plugins are already set up.');
-      yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STEP_COMPLETED, 'host', { changed: false });
-      return;
-    }
-
-    const names = pending.map(status => status.target).join(' and ');
-    const proceed =
-      params.yes ||
-      (params.interactive &&
-        (yield* ui.confirm(`Set up the Composio plugin for ${names}?`, { defaultValue: true })));
-    if (!proceed) {
-      yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STEP_SKIPPED, 'host', { origin: 'prompt' });
-      return;
-    }
-    yield* installSetupTargets(pending);
-    yield* ui.log.success(`Composio plugin ready for ${names}.`);
-    yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STEP_COMPLETED, 'host', { changed: true });
-  }).pipe(
-    Effect.catchAll(error =>
-      Effect.gen(function* () {
-        yield* Effect.logDebug('Onboard host wiring failed:', error);
-        yield* params.ui.log.warn(
-          `Agent plugin setup did not finish (${errorMessage(error)}). Continue with \`composio setup\` later.`
-        );
-      })
-    )
-  );
-
 interface TaskSelection {
   readonly task: OnboardTask | undefined;
   readonly toolkit: string | undefined;
@@ -349,6 +282,7 @@ export interface OnboardDemo {
   readonly slug: string;
   readonly args: Readonly<Record<string, unknown>>;
   readonly kind: 'read' | 'reversible_create' | undefined;
+  readonly summarize?: OnboardExecuteSummarizer;
 }
 
 export const resolveDemo = (params: {
@@ -370,16 +304,58 @@ export const resolveDemo = (params: {
 
   if (task) {
     const hint = task.demo.toolSlugHint;
+    const demoFromTask: OnboardDemo = {
+      slug: hint,
+      args: task.demo.sampleArgs,
+      kind: task.demo.kind,
+      summarize: task.demo.summarize,
+    };
     const slugs = params.searchSummary?.slugs ?? [];
     if (slugs.length === 0 || slugs.includes(hint)) {
-      return { slug: hint, args: task.demo.sampleArgs, kind: task.demo.kind };
+      return demoFromTask;
     }
-    return searchDemo ?? { slug: hint, args: task.demo.sampleArgs, kind: task.demo.kind };
+    return searchDemo ?? demoFromTask;
   }
   return searchDemo;
 };
 
-const executeDemo = (params: { readonly ui: TerminalUI; readonly demo: OnboardDemo }) =>
+const asRecord = (value: unknown): Record<string, unknown> =>
+  value !== null && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+const str = (value: unknown): string | undefined =>
+  typeof value === 'string' && value.length > 0 ? value : undefined;
+
+const genericExecuteSummary = (data: Record<string, unknown>): string | undefined => {
+  const d = { ...data, ...asRecord(data.data) };
+  const login = str(d.login) ?? str(d.username);
+  const idNum =
+    typeof d.number === 'number' ? d.number : typeof d.id === 'number' ? d.id : undefined;
+  const title = str(d.title) ?? str(d.name) ?? str(d.subject);
+  const url = str(d.html_url) ?? str(d.url) ?? str(d.permalink);
+  const parts: string[] = [];
+  if (login) parts.push(`@${login}`);
+  if (idNum !== undefined) parts.push(`#${idNum}`);
+  if (title) parts.push(`'${title}'`);
+  if (url) parts.push(`→ ${url}`);
+  return parts.length > 0 ? parts.join(' ') : undefined;
+};
+
+const showExecuteSummary = (
+  ui: TerminalUI,
+  summarize: OnboardExecuteSummarizer | undefined,
+  result: ToolExecuteResponse
+) =>
+  Effect.gen(function* () {
+    const line =
+      summarize?.(result.data) ?? genericExecuteSummary(result.data) ?? 'Execution successful';
+    const suffix = result.logId ? ` (logId: ${result.logId})` : '';
+    yield* ui.log.success(`${line}${suffix}`);
+  });
+
+const executeDemo = (params: {
+  readonly ui: TerminalUI;
+  readonly demo: OnboardDemo;
+  readonly quiet: boolean;
+}) =>
   runToolsExecute({
     slug: params.demo.slug,
     data: Option.some(JSON.stringify(params.demo.args)),
@@ -394,6 +370,10 @@ const executeDemo = (params: { readonly ui: TerminalUI; readonly demo: OnboardDe
     skipConnectionCheck: false,
     skipToolParamsCheck: false,
     skipChecks: false,
+    quiet: params.quiet,
+    onSuccess: params.quiet
+      ? result => showExecuteSummary(params.ui, params.demo.summarize, result)
+      : undefined,
   }).pipe(
     Effect.tapError(() =>
       params.ui.log.warn(
@@ -460,10 +440,12 @@ const offerFollowUpCreate = (params: {
       skipConnectionCheck: false,
       skipToolParamsCheck: false,
       skipChecks: false,
+      quiet: true,
+      onSuccess: result => showExecuteSummary(ui, followUp.summarize, result),
     }).pipe(
       Effect.tap(() =>
         Effect.gen(function* () {
-          yield* ui.log.success('Created — remember to close/archive it when you are done.');
+          yield* ui.log.info('Remember to close/archive it when you are done.');
           yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STEP_COMPLETED, 'create', {
             slug: followUp.toolSlugHint,
           });
@@ -484,7 +466,6 @@ const runNonInteractiveOnboard = (params: {
   readonly ui: TerminalUI;
   readonly state: OnboardState;
   readonly invocationSkips: ReadonlyArray<OnboardSkippableStep>;
-  readonly yes: boolean;
   readonly task: Option.Option<string>;
   readonly toolkit: Option.Option<string>;
 }) =>
@@ -492,13 +473,6 @@ const runNonInteractiveOnboard = (params: {
     const { ui, state } = params;
     const connectSkipped = params.invocationSkips.includes('connect');
     const executeSkipped = params.invocationSkips.includes('execute');
-
-    const config = yield* ComposioCliUserConfig;
-    const hostSkipped =
-      params.invocationSkips.includes('host') || config.data.onboard.skippedSteps.includes('host');
-    if (params.yes && !hostSkipped) {
-      yield* runHostStep({ ui, yes: true, interactive: false });
-    }
 
     const selection = Option.isSome(params.toolkit)
       ? selectionFromToolkit(params.toolkit.value)
@@ -538,7 +512,7 @@ const runNonInteractiveOnboard = (params: {
             slug: demo.slug,
             mode: 'non_interactive',
           });
-          yield* executeDemo({ ui, demo });
+          yield* executeDemo({ ui, demo, quiet: false });
           yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STEP_COMPLETED, 'execute', {
             slug: demo.slug,
           });
@@ -576,29 +550,19 @@ const runInteractiveOnboard = (params: {
 }) =>
   Effect.gen(function* () {
     const { ui } = params;
-    const effectiveNext = (state: OnboardState) =>
-      resolveOnboard({ facts: state, invocationSkips: params.invocationSkips }).nextStep;
-    const flagToolkit = Option.isSome(params.toolkit)
-      ? selectionFromToolkit(params.toolkit.value).toolkit
-      : Option.isSome(params.task)
-        ? selectionFromTaskText(params.task.value).toolkit
-        : undefined;
     const connectSkipped = params.invocationSkips.includes('connect');
+    const executeSkipped = params.invocationSkips.includes('execute');
+    const loginNeeded = (state: OnboardState) =>
+      resolveOnboard({ facts: state, invocationSkips: params.invocationSkips }).nextStep ===
+      'login';
 
     yield* ui.intro('composio onboard');
 
-    const config = yield* ComposioCliUserConfig;
-    const hostSkipped =
-      params.invocationSkips.includes('host') || config.data.onboard.skippedSteps.includes('host');
-    if (!hostSkipped) {
-      yield* runHostStep({ ui, yes: params.yes, interactive: true });
-    }
-
     let state = params.state;
 
-    if (effectiveNext(state) === 'login') {
+    if (loginNeeded(state)) {
       yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STEP_STARTED, 'login');
-      yield* ui.log.step('Step 1 — log in to Composio');
+      yield* ui.log.step('Log in to Composio');
       yield* browserLogin({
         scope: 'user',
         noBrowser: false,
@@ -621,33 +585,25 @@ const runInteractiveOnboard = (params: {
       return;
     }
 
-    let selectedTask: OnboardTask | undefined;
+    const selection = yield* resolveInteractiveSelection({
+      ui,
+      toolkit: params.toolkit,
+      task: params.task,
+    });
+    if (!selection) {
+      yield* ui.outro(
+        'No task selected. Re-run `composio onboard` anytime, or explore with `composio search "<what you want>"`.'
+      );
+      return;
+    }
+    const selectedTask = selection.task;
     let searchSummary: ToolsSearchSummary | undefined;
-    const namedNeedsConnect =
-      flagToolkit !== undefined &&
-      !state.connectedToolkits.includes(flagToolkit) &&
-      !connectSkipped &&
-      !state.connectionCheckFailed;
-    if (effectiveNext(state) === 'connect' || namedNeedsConnect) {
-      const selection = yield* resolveInteractiveSelection({
-        ui,
-        toolkit: params.toolkit,
-        task: params.task,
-      });
-      if (!selection) {
-        yield* ui.outro(
-          'No task selected. Re-run `composio onboard` anytime, or explore with `composio search "<what you want>"`.'
-        );
-        return;
-      }
-      yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STEP_STARTED, 'connect', {
-        toolkit: selection.toolkit,
-        task_id: selection.task?.id ?? FREE_TEXT_TASK_ID,
-      });
+    let targetToolkit = selection.toolkit;
 
+    if (!targetToolkit) {
       searchSummary = yield* runToolsSearch({
         query: [selection.query],
-        toolkits: selection.toolkit ? Option.some(selection.toolkit) : Option.none(),
+        toolkits: Option.none(),
         userId: Option.none(),
         projectName: Option.none(),
         limit: 5,
@@ -665,20 +621,39 @@ const runInteractiveOnboard = (params: {
           )
         )
       );
-
-      const toolkitSlug = selection.toolkit ?? searchSummary?.firstToolkit?.toLowerCase();
-      if (!toolkitSlug) {
+      targetToolkit = searchSummary?.firstToolkit?.toLowerCase();
+      if (!targetToolkit) {
         yield* ui.log.warn('No tools found for that task.');
         yield* ui.outro(
           'Try `composio search "<phrase>"` to explore, then re-run `composio onboard`.'
         );
         return;
       }
-      selectedTask = selection.task;
+    }
 
-      yield* ui.log.step(`Step 2 — connect ${toolkitSlug} (opens your browser for OAuth)`);
+    const isConnected = () =>
+      state.connectedToolkits.some(t => t.toLowerCase() === targetToolkit!.toLowerCase());
+
+    if (!isConnected()) {
+      if (connectSkipped) {
+        yield* ui.outro(
+          'Connecting an app was skipped — run `composio onboard` again without `--skip connect` to continue.'
+        );
+        return;
+      }
+      if (state.connectionCheckFailed) {
+        yield* ui.outro(
+          "Couldn't reach the Composio API to check your connections. Check your network and re-run `composio onboard`."
+        );
+        return;
+      }
+      yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STEP_STARTED, 'connect', {
+        toolkit: targetToolkit,
+        task_id: selectedTask?.id ?? FREE_TEXT_TASK_ID,
+      });
+      yield* ui.log.step(`Connect ${targetToolkit} (opens your browser for OAuth)`);
       yield* runConnectedAccountsLink({
-        toolkit: Option.some(toolkitSlug),
+        toolkit: Option.some(targetToolkit),
         authConfig: Option.none(),
         userId: Option.none(),
         projectName: Option.none(),
@@ -688,99 +663,72 @@ const runInteractiveOnboard = (params: {
         list: false,
         rootOnly: true,
       });
-
       state = yield* computeOnboardState;
-      if (!state.connectedToolkits.some(t => t.toLowerCase() === toolkitSlug.toLowerCase())) {
-        yield* ui.log.warn(`No active connection for "${toolkitSlug}" yet.`);
+      if (!isConnected()) {
+        yield* ui.log.warn(`No active connection for "${targetToolkit}" yet.`);
         yield* ui.outro('Finish authorizing in the browser, then re-run `composio onboard`.');
         return;
       }
       yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STEP_COMPLETED, 'connect', {
-        toolkit: toolkitSlug,
+        toolkit: targetToolkit,
       });
+    } else {
+      yield* ui.log.success(`${targetToolkit} already connected`);
     }
 
-    if (!state.hasConnection) {
+    if (executeSkipped) {
       yield* ui.outro(
-        state.connectionCheckFailed
-          ? "Couldn't reach the Composio API to check your connections. Check your network and re-run `composio onboard`."
-          : 'Connecting an app was skipped — run `composio onboard` again without `--skip connect` to continue.'
+        'Your first execution was skipped — run `composio onboard` again without `--skip execute` to finish.'
       );
       return;
     }
 
-    if (effectiveNext(state) === 'execute') {
-      const flagTask = Option.isSome(params.toolkit)
-        ? selectionFromToolkit(params.toolkit.value).task
-        : Option.isSome(params.task)
-          ? selectionFromTaskText(params.task.value).task
-          : undefined;
-      const demoTask =
-        selectedTask ?? flagTask ?? findOnboardTaskForConnectedToolkits(state.connectedToolkits);
-      const demo = resolveDemo({
-        task: demoTask,
-        searchSummary,
-        connectedToolkits: state.connectedToolkits,
-      });
-      if (!demo) {
-        yield* ui.log.info(
-          commandHintStep('Find something to run', 'root.search') +
-            '\n' +
-            commandHintStep('Then execute it', 'root.execute')
-        );
-        yield* ui.outro(
-          'Almost there — your first successful `composio execute` completes onboarding.'
-        );
-        return;
-      }
-
-      yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STEP_STARTED, 'execute', { slug: demo.slug });
-      const confirmed =
-        params.yes ||
-        (yield* ui.confirm(`Run ${demo.slug} now? (${demoKindLabel(demo.kind)})`, {
-          defaultValue: true,
-        }));
-      if (!confirmed) {
-        yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STEP_SKIPPED, 'execute', {
-          origin: 'prompt',
-        });
-        yield* ui.outro(
-          `No problem — run it anytime:\n> composio execute ${demo.slug} -d '${JSON.stringify(demo.args)}'`
-        );
-        return;
-      }
-
-      yield* ui.log.step(`Step 3 — run your first tool: ${demo.slug}`);
-      yield* executeDemo({ ui, demo });
-      yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STEP_COMPLETED, 'execute', {
-        slug: demo.slug,
-      });
-      yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_COMPLETED);
-      yield* ui.log.success('Onboarding complete — you just ran your first Composio tool.');
-
-      if (!params.yes && demoTask?.followUpCreate) {
-        yield* offerFollowUpCreate({ ui, followUp: demoTask.followUpCreate });
-      }
-
+    const demoTask = selectedTask ?? findOnboardTaskByToolkit(targetToolkit);
+    const demo = resolveDemo({
+      task: demoTask,
+      searchSummary,
+      connectedToolkits: [targetToolkit],
+    });
+    if (!demo) {
       yield* ui.log.info(
-        [
-          commandHintStep('Find more tools', 'root.search'),
-          commandHintStep('Execute anything', 'root.execute'),
-        ].join('\n')
+        commandHintStep('Find something to run', 'root.search') +
+          '\n' +
+          commandHintStep('Then execute it', 'root.execute')
       );
-      yield* ui.outro("You're all set!");
+      yield* ui.outro(
+        'Almost there — your first successful `composio execute` completes onboarding.'
+      );
       return;
     }
 
-    const healedState = yield* computeOnboardState;
-    if (healedState.complete) {
-      yield* ui.outro("You're all set!");
+    yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STEP_STARTED, 'execute', { slug: demo.slug });
+    yield* ui.log.step(`Run your first tool: ${demo.slug} (${demoKindLabel(demo.kind)})`);
+    const confirmed =
+      params.yes || (yield* ui.confirm(`Run ${demo.slug} now?`, { defaultValue: true }));
+    if (!confirmed) {
+      yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STEP_SKIPPED, 'execute', { origin: 'prompt' });
+      yield* ui.outro(
+        `No problem — run it anytime:\n> composio execute ${demo.slug} -d '${JSON.stringify(demo.args)}'`
+      );
       return;
     }
 
-    yield* ui.outro(
-      'Your first execution was skipped — run `composio onboard` again without `--skip execute` to finish.'
+    yield* executeDemo({ ui, demo, quiet: true });
+    yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STEP_COMPLETED, 'execute', { slug: demo.slug });
+    yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_COMPLETED);
+    yield* ui.log.success('Onboarding complete — you just ran your first Composio tool.');
+
+    if (!params.yes && demoTask?.followUpCreate) {
+      yield* offerFollowUpCreate({ ui, followUp: demoTask.followUpCreate });
+    }
+
+    yield* ui.log.info(
+      [
+        commandHintStep('Find more tools', 'root.search'),
+        commandHintStep('Execute anything', 'root.execute'),
+      ].join('\n')
     );
+    yield* ui.outro("You're all set!");
   });
 
 export const onboardCmd = Command.make(
@@ -865,7 +813,6 @@ export const onboardCmd = Command.make(
           ui,
           state,
           invocationSkips,
-          yes,
           task,
           toolkit,
         });
