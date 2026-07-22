@@ -770,6 +770,12 @@ const runInteractiveOnboard = (params: {
       return;
     }
 
+    const healedState = yield* computeOnboardState;
+    if (healedState.complete) {
+      yield* ui.outro("You're all set!");
+      return;
+    }
+
     yield* ui.outro(
       'Your first execution was skipped — run `composio onboard` again without `--skip execute` to finish.'
     );
