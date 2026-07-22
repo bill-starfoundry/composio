@@ -39,12 +39,12 @@ const cartesian = (): ReadonlyArray<Dim> => {
             [] as OnboardSkippableStep[],
             ['connect'],
             ['execute'],
-            ['host'],
+            ['login'],
           ] as ReadonlyArray<ReadonlyArray<OnboardSkippableStep>>) {
             for (const persistedSkips of [
               [] as OnboardSkippableStep[],
-              ['host'],
               ['connect'],
+              ['execute'],
             ] as ReadonlyArray<ReadonlyArray<OnboardSkippableStep>>) {
               for (const connectedToolkits of [[], ['github'], ['salesforce']]) {
                 dims.push({
@@ -145,13 +145,10 @@ describe('onboard state contract (invariant matrix)', () => {
         expect(r.complete, label).toBe(true);
       }
 
-      // Invariant 7: skipped lists only this-invocation skips + persisted host; history is separate.
+      // Invariant 7: skipped lists only this-invocation skips; persisted history is separate.
       for (const gate of skippedGates) {
         expect(dim.invocationSkips, label).toContain(gate);
       }
-      expect(r.skipped.includes('host'), label).toBe(
-        dim.invocationSkips.includes('host') || dim.persistedSkips.includes('host')
-      );
       expect(r.persistedSkips, label).toEqual(dim.persistedSkips.filter(isOnboardSkippableStep));
       for (const persisted of dim.persistedSkips) {
         if (isGate(persisted) && !dim.invocationSkips.includes(persisted)) {

@@ -96,11 +96,11 @@ describe('isOnboardComplete', () => {
 });
 
 describe('isOnboardSkippableStep', () => {
-  it('accepts host and the three gates, rejects anything else', () => {
-    expect(isOnboardSkippableStep('host')).toBe(true);
+  it('accepts the three gates, rejects anything else', () => {
     expect(isOnboardSkippableStep('login')).toBe(true);
     expect(isOnboardSkippableStep('connect')).toBe(true);
     expect(isOnboardSkippableStep('execute')).toBe(true);
+    expect(isOnboardSkippableStep('host')).toBe(false);
     expect(isOnboardSkippableStep('search')).toBe(false);
     expect(isOnboardSkippableStep('')).toBe(false);
   });
@@ -186,8 +186,8 @@ describe('recordOnboardSkippedSteps', () => {
     const stub = makeConfigStub();
     return Effect.gen(function* () {
       yield* recordOnboardSkippedSteps(['execute']);
-      yield* recordOnboardSkippedSteps(['execute', 'host']);
-      expect([...stub.getRaw().onboard.skippedSteps].sort()).toEqual(['execute', 'host']);
+      yield* recordOnboardSkippedSteps(['execute', 'connect']);
+      expect([...stub.getRaw().onboard.skippedSteps].sort()).toEqual(['connect', 'execute']);
     }).pipe(Effect.provide(stub.layer));
   });
 });

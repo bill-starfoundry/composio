@@ -37,6 +37,29 @@ describe('ONBOARD_TASKS registry', () => {
   });
 });
 
+describe('demo summarize (human execute output)', () => {
+  const github = findOnboardTaskByToolkit('github')!;
+
+  it('summarizes the github profile read into a one-liner', () => {
+    expect(github.demo.summarize?.({ login: 'KJ-11', name: 'Kshitij' })).toBe(
+      "You're @KJ-11 (Kshitij)"
+    );
+    expect(github.demo.summarize?.({ data: { login: 'octocat' } })).toBe("You're @octocat");
+    expect(github.demo.summarize?.({ irrelevant: true })).toBeUndefined();
+  });
+
+  it('summarizes the github create into an issue line with url', () => {
+    expect(
+      github.followUpCreate?.summarize?.({
+        number: 7,
+        title: 'test',
+        html_url: 'https://github.com/acme/app/issues/7',
+      })
+    ).toBe("Created issue #7 'test' → https://github.com/acme/app/issues/7");
+    expect(github.followUpCreate?.summarize?.({ no_number: true })).toBeUndefined();
+  });
+});
+
 describe('followUpCreate (opt-in reversible create)', () => {
   it('is present only on tasks with a natural reversible-create', () => {
     const withCreate = ONBOARD_TASKS.filter(task => task.followUpCreate).map(task => task.toolkit);

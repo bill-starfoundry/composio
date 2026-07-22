@@ -1,10 +1,25 @@
 import { describe, expect, layer } from '@effect/vitest';
-import { ConfigProvider, Effect } from 'effect';
+import { ConfigProvider, Effect, Option } from 'effect';
 import { HelpDoc, ValidationError } from '@effect/cli';
 import { extendConfigProvider } from 'src/services/config';
 import { ComposioUserContext } from 'src/services/user-context';
+import { TerminalUI } from 'src/services/terminal-ui';
 import { cli, TestLive, MockConsole } from 'test/__utils__';
+import { terminalUITestImpl } from 'test/__utils__/services/terminal-ui-test';
 import type { ConnectedAccountItem } from 'src/models/connected-accounts';
+
+const interactiveUI = TerminalUI.of({
+  ...terminalUITestImpl,
+  capabilities: Effect.succeed({
+    stdinIsTTY: true,
+    stdoutIsTTY: true,
+    stderrIsTTY: true,
+    isInteractive: true,
+    canDecorate: true,
+  }),
+  confirm: () => Effect.succeed(true),
+  text: () => Effect.succeed(Option.none()),
+});
 
 const loggedInConfigProvider = ConfigProvider.fromMap(
   new Map([['COMPOSIO_USER_API_KEY', 'test_api_key']])
@@ -86,29 +101,50 @@ describe('CLI: composio onboard (non-interactive contract)', () => {
     );
   });
 
-  layer(TestLive({ baseConfigProvider: loggedInConfigProvider }))('host wiring under --yes', it => {
-    it.scoped('[Given] --yes and no persisted host skip [Then] host wiring runs', () =>
-      Effect.gen(function* () {
-        yield* loginTestOrg;
-        yield* cli(['onboard', '--yes', '--toolkit', 'github']);
-        const output = (yield* MockConsole.getLines({ stripAnsi: true })).join('\n');
-        expect(output).toContain('Agent plugin');
-      })
-    );
-  });
-
   layer(
     TestLive({
       baseConfigProvider: loggedInConfigProvider,
-      cliUserConfig: { onboardSkippedSteps: ['host'] },
+      connectedAccountsData: {
+        items: [{ ...gmailAccount, id: 'con_gh', toolkit: { slug: 'github' } }],
+      },
+      toolsExecutor: {
+        respondWith: {
+          successful: true,
+          data: { login: 'KJ-11', name: 'Kshitij Jhunjhunwala' },
+          error: null,
+          logId: 'log_demo',
+        },
+      },
+      terminalUI: interactiveUI,
     })
-  )('host wiring honors persisted skip non-interactively', it => {
-    it.scoped('[Given] --yes and a persisted host skip [Then] host wiring is not attempted', () =>
+  )('interactive human summary', it => {
+    it.scoped(
+      '[Given] connected + interactive menu [Then] shows a summary line, not raw JSON',
+      () =>
+        Effect.gen(function* () {
+          yield* loginTestOrg;
+          yield* cli(['onboard']);
+          const output = (yield* MockConsole.getLines({ stripAnsi: true })).join('\n');
+          // menu picks the first curated task (github); it is connected, so acknowledge it
+          expect(output).toContain('github already connected');
+          // human summary from the demo's summarize(), not a raw JSON dump
+          expect(output).toContain("You're @KJ-11 (Kshitij Jhunjhunwala)");
+          expect(output).toContain('Onboarding complete');
+          // the forced raw JSON result must NOT be emitted in interactive mode
+          expect(output).not.toContain('"login"');
+          expect(output).not.toContain('"successful"');
+        })
+    );
+  });
+
+  layer(TestLive({ baseConfigProvider: loggedInConfigProvider }))('never wires hosts', it => {
+    it.scoped('[Given] --yes [Then] onboard never touches agent plugins', () =>
       Effect.gen(function* () {
         yield* loginTestOrg;
         yield* cli(['onboard', '--yes', '--toolkit', 'github']);
         const output = (yield* MockConsole.getLines({ stripAnsi: true })).join('\n');
         expect(output).not.toContain('Agent plugin');
+        expect(output).not.toContain('plugin');
         expect(output).toContain('"status": "pending"');
       })
     );
@@ -262,24 +298,6 @@ describe('CLI: composio onboard (non-interactive contract)', () => {
           // the contradiction is gone: connect never appears in both skipped and next/remaining
           expect(state.skipped).not.toContain('connect');
         })
-    );
-  });
-
-  layer(
-    TestLive({
-      baseConfigProvider: loggedInConfigProvider,
-      cliUserConfig: { onboardSkippedSteps: ['host'] },
-    })
-  )('persisted host skip still reported as skipped', it => {
-    it.scoped('[Given] persisted host skip [Then] host appears in the effective skipped list', () =>
-      Effect.gen(function* () {
-        yield* loginTestOrg;
-        yield* cli(['onboard']);
-        const output = (yield* MockConsole.getLines()).join('\n');
-        const state = extractStateJson(output);
-        expect(state.skipped).toContain('host');
-        expect(state.persisted_skips).toEqual(['host']);
-      })
     );
   });
 
