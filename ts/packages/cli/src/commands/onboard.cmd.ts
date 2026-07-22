@@ -162,6 +162,7 @@ const emitStatus = (params: {
   readonly invocationSkips: ReadonlyArray<OnboardSkippableStep>;
   readonly emitHuman: boolean;
   readonly emitJson: boolean;
+  readonly forceJson: boolean;
   readonly withIntro: boolean;
 }) =>
   Effect.gen(function* () {
@@ -216,7 +217,8 @@ const emitStatus = (params: {
         buildStateJson({
           state,
           invocationSkips: params.invocationSkips,
-        })
+        }),
+        params.forceJson ? { force: true } : undefined
       );
     }
   });
@@ -577,9 +579,9 @@ const runInteractiveOnboard = (params: {
     const effectiveNext = (state: OnboardState) =>
       resolveOnboard({ facts: state, invocationSkips: params.invocationSkips }).nextStep;
     const flagToolkit = Option.isSome(params.toolkit)
-      ? selectionFromToolkit(params.toolkit.value).task?.toolkit
+      ? selectionFromToolkit(params.toolkit.value).toolkit
       : Option.isSome(params.task)
-        ? selectionFromTaskText(params.task.value).task?.toolkit
+        ? selectionFromTaskText(params.task.value).toolkit
         : undefined;
     const connectSkipped = params.invocationSkips.includes('connect');
 
@@ -819,6 +821,7 @@ export const onboardCmd = Command.make(
           invocationSkips,
           emitHuman,
           emitJson,
+          forceJson: json,
           withIntro: interactive,
         });
         return;
@@ -846,6 +849,7 @@ export const onboardCmd = Command.make(
           invocationSkips,
           emitHuman,
           emitJson,
+          forceJson: json,
           withIntro: interactive,
         });
         return;
