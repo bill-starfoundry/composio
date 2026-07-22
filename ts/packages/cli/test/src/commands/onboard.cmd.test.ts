@@ -127,14 +127,71 @@ describe('CLI: composio onboard (non-interactive contract)', () => {
           const output = (yield* MockConsole.getLines({ stripAnsi: true })).join('\n');
           // menu picks the first curated task (github); it is connected, so acknowledge it
           expect(output).toContain('github already connected');
+          // pre-run copy announces the tool before the confirm, with a safety note
+          expect(output).toContain(
+            'Ready — this runs GITHUB_GET_THE_AUTHENTICATED_USER (safe, read-only)'
+          );
           // human summary from the demo's summarize(), not a raw JSON dump
           expect(output).toContain("You're @KJ-11 (Kshitij Jhunjhunwala)");
-          expect(output).toContain('Onboarding complete');
           // the forced raw JSON result must NOT be emitted in interactive mode
           expect(output).not.toContain('"login"');
           expect(output).not.toContain('"successful"');
-          // end-of-onboarding soft nudge to composio setup
+          // new completion copy: headline + three real example commands + setup tip
+          expect(output).toContain('first Composio tool');
+          expect(output).toContain('composio search "send myself a test Slack message"');
+          expect(output).toContain('composio search "create a GitHub issue in my repo"');
+          expect(output).toContain('composio search "what\'s on my calendar today"');
           expect(output).toContain('composio setup');
+        })
+    );
+  });
+
+  const menuCapture: { options: ReadonlyArray<{ value: string; label: string }> } = { options: [] };
+  const menuCapturingUI = TerminalUI.of({
+    ...interactiveUI,
+    select: ((_message: string, options: ReadonlyArray<{ value: string; label: string }>) => {
+      menuCapture.options = options;
+      // decline the run so the flow stops right after the menu without OAuth/execute
+      return Effect.succeed(options[0]!.value);
+    }) as TerminalUI['select'],
+    confirm: () => Effect.succeed(false),
+  });
+
+  layer(
+    TestLive({
+      baseConfigProvider: loggedInConfigProvider,
+      connectedAccountsData: { items: [gmailAccount] },
+      terminalUI: menuCapturingUI,
+    })
+  )('menu has only curated tasks (no free-text)', it => {
+    it.scoped(
+      '[Given] interactive menu [Then] every option is a curated task, no "Something else"',
+      () =>
+        Effect.gen(function* () {
+          menuCapture.options = [];
+          yield* loginTestOrg;
+          yield* cli(['onboard']);
+          expect(menuCapture.options.length).toBe(5);
+          for (const option of menuCapture.options) {
+            expect(option.value).not.toBe('free_text');
+          }
+          const labels = menuCapture.options.map(o => o.label).join(' | ');
+          expect(labels).not.toContain('Something else');
+        })
+    );
+  });
+
+  layer(TestLive({ baseConfigProvider: loggedInConfigProvider }))('rejects unknown --task', it => {
+    it.scoped(
+      '[Given] --task <nonsense> [Then] a hint lists the curated toolkits, no free-text search',
+      () =>
+        Effect.gen(function* () {
+          yield* loginTestOrg;
+          yield* cli(['onboard', '--task', 'order me a pizza']);
+          const output = (yield* MockConsole.getLines({ stripAnsi: true })).join('\n');
+          expect(output).toContain('No starter task matches');
+          expect(output).toContain('order me a pizza');
+          expect(output).toContain('github, gmail, slack, linear, notion');
         })
     );
   });

@@ -60,8 +60,6 @@ export interface OnboardTask {
   readonly followUpCreate?: OnboardFollowUpCreate;
 }
 
-export const FREE_TEXT_TASK_ID = 'free_text';
-
 export const ONBOARD_TASKS: ReadonlyArray<OnboardTask> = [
   {
     id: 'github_profile',

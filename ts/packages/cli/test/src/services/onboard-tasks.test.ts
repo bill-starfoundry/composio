@@ -2,7 +2,6 @@ import { describe, expect, it } from '@effect/vitest';
 import {
   findOnboardTaskByToolkit,
   findOnboardTaskForConnectedToolkits,
-  FREE_TEXT_TASK_ID,
   matchOnboardTask,
   ONBOARD_TASKS,
 } from 'src/services/onboard-tasks';
@@ -22,12 +21,11 @@ describe('ONBOARD_TASKS registry', () => {
     }
   });
 
-  it('has unique ids and toolkits, none colliding with the free-text escape', () => {
+  it('has unique ids and toolkits', () => {
     const ids = ONBOARD_TASKS.map(task => task.id);
     const toolkits = ONBOARD_TASKS.map(task => task.toolkit);
     expect(new Set(ids).size).toBe(ids.length);
     expect(new Set(toolkits).size).toBe(toolkits.length);
-    expect(ids).not.toContain(FREE_TEXT_TASK_ID);
   });
 
   it('uses lowercase toolkit slugs', () => {

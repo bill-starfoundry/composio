@@ -17,7 +17,6 @@ import {
 import {
   findOnboardTaskByToolkit,
   findOnboardTaskForConnectedToolkits,
-  FREE_TEXT_TASK_ID,
   matchOnboardTask,
   ONBOARD_TASKS,
   type OnboardExecuteSummarizer,
@@ -25,10 +24,7 @@ import {
   type OnboardTask,
 } from 'src/services/onboard-tasks';
 import { browserLogin } from 'src/commands/login.cmd';
-import {
-  runToolsSearch,
-  type ToolsSearchSummary,
-} from 'src/commands/tools/commands/tools.search.cmd';
+import type { ToolsSearchSummary } from 'src/commands/tools/commands/tools.search.cmd';
 import { runConnectedAccountsLink } from 'src/commands/connected-accounts/commands/connected-accounts.link.cmd';
 import { runToolsExecute } from 'src/commands/tools/commands/tools.execute.cmd';
 import type { ToolExecuteResponse } from 'src/services/tools-executor';
@@ -87,7 +83,29 @@ type OnboardEventName =
 const track = (name: OnboardEventName, step?: string, properties?: Record<string, unknown>) =>
   trackCliEventEffect(getOnboardFunnelEvent({ name, step, properties }));
 
-const SETUP_NUDGE = 'Tip: use Composio inside Claude Code or Codex — run `composio setup`.';
+const curatedToolkitsList = (): string => ONBOARD_TASKS.map(task => task.toolkit).join(', ');
+
+const noCuratedTaskMessage = (text: string): string =>
+  `No starter task matches "${text}". Available: ${curatedToolkitsList()}. Try \`composio onboard --toolkit <slug>\`.`;
+
+const emitCompletionCopy = (ui: TerminalUI) =>
+  Effect.gen(function* () {
+    yield* ui.log.success("That's your first Composio tool! 🎉  1,000+ apps, one command away.");
+    yield* ui.log.info(
+      [
+        'Try a few more — just say what you want:',
+        '  composio search "send myself a test Slack message"',
+        '  composio search "create a GitHub issue in my repo"',
+        '  composio search "what\'s on my calendar today"',
+      ].join('\n')
+    );
+    yield* ui.log.info(
+      ['Bring Composio into your coding agent (Claude Code / Codex):', '  composio setup'].join(
+        '\n'
+      )
+    );
+    yield* ui.outro("You're all set.");
+  });
 
 const stateLabel = (state: OnboardState): string => {
   if (state.complete) return 'complete';
@@ -187,15 +205,7 @@ const emitStatus = (params: {
 
     const next = nextCommandFor(state, resolution.nextStep);
     if (resolution.complete) {
-      yield* ui.log.info(
-        [
-          commandHintStep('Find tools', 'root.search'),
-          commandHintStep('Execute a tool', 'root.execute'),
-          'Run a script:\n> composio run \'const me = await execute("GITHUB_GET_THE_AUTHENTICATED_USER"); console.log(me)\'',
-        ].join('\n')
-      );
-      yield* ui.log.info(SETUP_NUDGE);
-      yield* ui.outro("You're all set!");
+      yield* emitCompletionCopy(ui);
     } else if (next) {
       yield* ui.outro(`Next: ${next.cmd}`);
     } else if (resolution.connectionUnknown) {
@@ -221,25 +231,17 @@ const emitStatus = (params: {
 
 interface TaskSelection {
   readonly task: OnboardTask | undefined;
-  readonly toolkit: string | undefined;
-  readonly query: string;
+  readonly toolkit: string;
 }
 
 const selectionFromToolkit = (rawToolkit: string): TaskSelection => {
   const toolkit = rawToolkit.trim().toLowerCase();
-  const curated = findOnboardTaskByToolkit(toolkit);
-  return {
-    task: curated,
-    toolkit,
-    query: curated?.searchQuery ?? `things I can do with ${toolkit}`,
-  };
+  return { task: findOnboardTaskByToolkit(toolkit), toolkit };
 };
 
-const selectionFromTaskText = (text: string): TaskSelection => {
+const selectionFromTaskText = (text: string): TaskSelection | undefined => {
   const curated = matchOnboardTask(text);
-  return curated
-    ? { task: curated, toolkit: curated.toolkit, query: curated.searchQuery }
-    : { task: undefined, toolkit: undefined, query: text.trim() };
+  return curated ? { task: curated, toolkit: curated.toolkit } : undefined;
 };
 
 const orderTasksConnectedFirst = (
@@ -264,7 +266,11 @@ const resolveInteractiveSelection = (params: {
       return selectionFromToolkit(params.toolkit.value);
     }
     if (Option.isSome(params.task)) {
-      return selectionFromTaskText(params.task.value);
+      const selection = selectionFromTaskText(params.task.value);
+      if (!selection) {
+        yield* params.ui.log.error(noCuratedTaskMessage(params.task.value));
+      }
+      return selection;
     }
 
     const connected = new Set(params.connectedToolkits.map(toolkit => toolkit.toLowerCase()));
@@ -276,24 +282,10 @@ const resolveInteractiveSelection = (params: {
           ? 'connected'
           : `connects ${candidate.toolkit} via OAuth`,
       })),
-      {
-        value: FREE_TEXT_TASK_ID,
-        label: 'Something else…',
-        hint: 'describe it and we will find the tools',
-      },
     ]);
 
-    if (choice !== FREE_TEXT_TASK_ID) {
-      const curated = ONBOARD_TASKS.find(candidate => candidate.id === choice);
-      return curated
-        ? { task: curated, toolkit: curated.toolkit, query: curated.searchQuery }
-        : undefined;
-    }
-
-    const text = yield* params.ui.text('What do you want to do?', {
-      placeholder: 'e.g. "summarize my unread emails"',
-    });
-    return Option.isSome(text) ? selectionFromTaskText(text.value) : undefined;
+    const curated = ONBOARD_TASKS.find(candidate => candidate.id === choice);
+    return curated ? { task: curated, toolkit: curated.toolkit } : undefined;
   });
 
 export interface OnboardDemo {
@@ -401,14 +393,14 @@ const executeDemo = (params: {
     )
   );
 
-const demoKindLabel = (kind: OnboardDemo['kind']): string => {
+const preRunSafety = (kind: OnboardDemo['kind']): string => {
   switch (kind) {
-    case 'read':
-      return 'read-only demo';
     case 'reversible_create':
       return 'creates something you can delete right after';
+    case 'read':
+      return 'safe, read-only';
     default:
-      return 'execute validates inputs and tells you what to fix';
+      return 'safe — validates inputs first';
   }
 };
 
@@ -506,7 +498,7 @@ const runNonInteractiveOnboard = (params: {
       if (!connected.has(target) && !connectSkipped && !state.connectionCheckFailed) {
         yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STEP_STARTED, 'connect', {
           toolkit: target,
-          task_id: selection.task?.id ?? FREE_TEXT_TASK_ID,
+          task_id: selection.task?.id ?? 'custom',
           mode: 'non_interactive',
         });
         return yield* runConnectedAccountsLink({
@@ -546,8 +538,8 @@ const runNonInteractiveOnboard = (params: {
       if (selection?.toolkit && !connected.has(selection.toolkit) && state.connectionCheckFailed) {
         return `Couldn't verify whether "${selection.toolkit}" is connected. Re-run \`composio onboard\` once the Composio API is reachable.`;
       }
-      if (Option.isSome(params.task) && !selection?.toolkit) {
-        return `No curated task matched. Run \`composio search "${params.task.value}"\` to find a toolkit, then \`composio onboard --toolkit <slug>\`.`;
+      if (Option.isSome(params.task) && !selection) {
+        return noCuratedTaskMessage(params.task.value);
       }
       return undefined;
     });
@@ -613,45 +605,11 @@ const runInteractiveOnboard = (params: {
       connectedToolkits: state.connectedToolkits,
     });
     if (!selection) {
-      yield* ui.outro(
-        'No task selected. Re-run `composio onboard` anytime, or explore with `composio search "<what you want>"`.'
-      );
+      yield* ui.outro('Re-run `composio onboard` anytime to pick a starter task.');
       return;
     }
     const selectedTask = selection.task;
-    let searchSummary: ToolsSearchSummary | undefined;
-    let targetToolkit = selection.toolkit;
-
-    if (!targetToolkit) {
-      searchSummary = yield* runToolsSearch({
-        query: [selection.query],
-        toolkits: Option.none(),
-        userId: Option.none(),
-        projectName: Option.none(),
-        limit: 5,
-        json: false,
-        human: true,
-        rootOnly: true,
-      }).pipe(
-        Effect.catchAll(error =>
-          Effect.logDebug('Onboard search failed:', error).pipe(
-            Effect.as({
-              firstSlug: undefined,
-              firstToolkit: undefined,
-              slugs: [],
-            } satisfies ToolsSearchSummary)
-          )
-        )
-      );
-      targetToolkit = searchSummary?.firstToolkit?.toLowerCase();
-      if (!targetToolkit) {
-        yield* ui.log.warn('No tools found for that task.');
-        yield* ui.outro(
-          'Try `composio search "<phrase>"` to explore, then re-run `composio onboard`.'
-        );
-        return;
-      }
-    }
+    const targetToolkit = selection.toolkit;
 
     const isConnected = () =>
       state.connectedToolkits.some(t => t.toLowerCase() === targetToolkit!.toLowerCase());
@@ -671,7 +629,7 @@ const runInteractiveOnboard = (params: {
       }
       yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STEP_STARTED, 'connect', {
         toolkit: targetToolkit,
-        task_id: selectedTask?.id ?? FREE_TEXT_TASK_ID,
+        task_id: selectedTask?.id ?? 'custom',
       });
       yield* ui.log.step(`Connect ${targetToolkit} (opens your browser for OAuth)`);
       yield* runConnectedAccountsLink({
@@ -708,7 +666,7 @@ const runInteractiveOnboard = (params: {
     const demoTask = selectedTask ?? findOnboardTaskByToolkit(targetToolkit);
     const demo = resolveDemo({
       task: demoTask,
-      searchSummary,
+      searchSummary: undefined,
       connectedToolkits: [targetToolkit],
     });
     if (!demo) {
@@ -724,7 +682,7 @@ const runInteractiveOnboard = (params: {
     }
 
     yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STEP_STARTED, 'execute', { slug: demo.slug });
-    yield* ui.log.step(`Run your first tool: ${demo.slug} (${demoKindLabel(demo.kind)})`);
+    yield* ui.log.step(`Ready — this runs ${demo.slug} (${preRunSafety(demo.kind)})`);
     const confirmed =
       params.yes || (yield* ui.confirm(`Run ${demo.slug} now?`, { defaultValue: true }));
     if (!confirmed) {
@@ -738,20 +696,12 @@ const runInteractiveOnboard = (params: {
     yield* executeDemo({ ui, demo, quiet: true });
     yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STEP_COMPLETED, 'execute', { slug: demo.slug });
     yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_COMPLETED);
-    yield* ui.log.success('Onboarding complete — you just ran your first Composio tool.');
 
     if (!params.yes && demoTask?.followUpCreate) {
       yield* offerFollowUpCreate({ ui, followUp: demoTask.followUpCreate });
     }
 
-    yield* ui.log.info(
-      [
-        commandHintStep('Find more tools', 'root.search'),
-        commandHintStep('Execute anything', 'root.execute'),
-      ].join('\n')
-    );
-    yield* ui.log.info(SETUP_NUDGE);
-    yield* ui.outro("You're all set!");
+    yield* emitCompletionCopy(ui);
   });
 
 export const onboardCmd = Command.make(
