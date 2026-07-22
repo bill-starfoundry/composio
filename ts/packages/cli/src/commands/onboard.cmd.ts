@@ -688,7 +688,7 @@ const runInteractiveOnboard = (params: {
       });
 
       state = yield* computeOnboardState;
-      if (!state.hasConnection) {
+      if (!state.connectedToolkits.some(t => t.toLowerCase() === toolkitSlug.toLowerCase())) {
         yield* ui.log.warn(`No active connection for "${toolkitSlug}" yet.`);
         yield* ui.outro('Finish authorizing in the browser, then re-run `composio onboard`.');
         return;
