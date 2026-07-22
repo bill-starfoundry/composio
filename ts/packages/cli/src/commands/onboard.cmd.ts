@@ -6,11 +6,11 @@ import { ComposioCliUserConfig } from 'src/services/cli-user-config';
 import {
   computeOnboardState,
   isOnboardSkippableStep,
-  ONBOARD_GATE_STEPS,
   ONBOARD_SKIPPABLE_STEPS,
   recordOnboardSkippedSteps,
-  resolveNextOnboardStep,
+  resolveOnboard,
   type OnboardGateStep,
+  type OnboardResolution,
   type OnboardSkippableStep,
   type OnboardState,
 } from 'src/services/onboard-state';
@@ -101,12 +101,7 @@ const stateLabel = (state: OnboardState): string => {
   return 'connected';
 };
 
-const completedGates = (state: OnboardState): ReadonlyArray<OnboardGateStep> =>
-  ONBOARD_GATE_STEPS.filter(gate =>
-    gate === 'login' ? state.loggedIn : gate === 'connect' ? state.hasConnection : state.hasExecuted
-  );
-
-const nextCommandFor = (
+export const nextCommandFor = (
   state: OnboardState,
   nextStep: OnboardGateStep | undefined
 ): { readonly step: OnboardGateStep; readonly cmd: string } | null => {
@@ -126,38 +121,34 @@ const nextCommandFor = (
   }
 };
 
-const buildStateJson = (params: {
+const resolutionFor = (
+  state: OnboardState,
+  invocationSkips: ReadonlyArray<OnboardSkippableStep>
+): OnboardResolution => resolveOnboard({ facts: state, invocationSkips });
+
+export const buildStateJson = (params: {
   readonly state: OnboardState;
-  readonly effectiveNextStep: OnboardGateStep | undefined;
   readonly invocationSkips: ReadonlyArray<OnboardSkippableStep>;
   readonly hint?: string;
 }): string => {
-  const { state, effectiveNextStep } = params;
-  const completed = completedGates(state);
-  const hostPersistentlySkipped = state.skippedSteps.includes('host');
-  const skipped = [
-    ...new Set<OnboardSkippableStep>([
-      ...params.invocationSkips,
-      ...(hostPersistentlySkipped ? (['host'] as const) : []),
-    ]),
-  ];
-  const remaining = ONBOARD_GATE_STEPS.filter(
-    gate => !completed.includes(gate) && !skipped.includes(gate)
-  );
+  const { state } = params;
+  const resolution = resolutionFor(state, params.invocationSkips);
   return JSON.stringify(
     {
       state: stateLabel(state),
-      completed,
-      remaining,
-      skipped,
-      ...(state.skippedSteps.length > 0 ? { persisted_skips: state.skippedSteps } : {}),
+      completed: resolution.completed,
+      remaining: resolution.remaining,
+      skipped: resolution.skipped,
+      ...(resolution.persistedSkips.length > 0
+        ? { persisted_skips: resolution.persistedSkips }
+        : {}),
       connections: {
         count: state.connectionCount,
         toolkits: state.connectedToolkits,
         ...(state.connectionCheckFailed ? { check_failed: true } : {}),
       },
       ...(state.orgId ? { org_id: state.orgId } : {}),
-      next: nextCommandFor(state, effectiveNextStep),
+      next: nextCommandFor(state, resolution.nextStep),
       ...(params.hint ? { hint: params.hint } : {}),
     },
     null,
@@ -168,7 +159,6 @@ const buildStateJson = (params: {
 const emitStatus = (params: {
   readonly ui: TerminalUI;
   readonly state: OnboardState;
-  readonly effectiveNextStep: OnboardGateStep | undefined;
   readonly invocationSkips: ReadonlyArray<OnboardSkippableStep>;
   readonly emitHuman: boolean;
   readonly emitJson: boolean;
@@ -176,6 +166,7 @@ const emitStatus = (params: {
 }) =>
   Effect.gen(function* () {
     const { ui, state } = params;
+    const resolution = resolutionFor(state, params.invocationSkips);
     if (params.withIntro) {
       yield* ui.intro('composio onboard');
     }
@@ -198,8 +189,8 @@ const emitStatus = (params: {
       ? ui.log.success('First tool execution: done')
       : ui.log.warn('First tool execution: not yet');
 
-    const next = nextCommandFor(state, params.effectiveNextStep);
-    if (state.complete) {
+    const next = nextCommandFor(state, resolution.nextStep);
+    if (resolution.complete) {
       yield* ui.log.info(
         [
           commandHintStep('Find tools', 'root.search'),
@@ -210,7 +201,7 @@ const emitStatus = (params: {
       yield* ui.outro("You're all set!");
     } else if (next) {
       yield* ui.outro(`Next: ${next.cmd}`);
-    } else if (state.connectionCheckFailed) {
+    } else if (resolution.connectionUnknown) {
       yield* ui.outro(
         "Couldn't reach the Composio API to check your connections. Check your network and re-run `composio onboard`."
       );
@@ -224,7 +215,6 @@ const emitStatus = (params: {
       yield* ui.output(
         buildStateJson({
           state,
-          effectiveNextStep: params.effectiveNextStep,
           invocationSkips: params.invocationSkips,
         })
       );
@@ -353,31 +343,38 @@ const resolveInteractiveSelection = (params: {
     return Option.isSome(text) ? selectionFromTaskText(text.value) : undefined;
   });
 
-interface OnboardDemo {
+export interface OnboardDemo {
   readonly slug: string;
   readonly args: Readonly<Record<string, unknown>>;
   readonly kind: 'read' | 'reversible_create' | undefined;
 }
 
-const resolveDemo = (params: {
+export const resolveDemo = (params: {
   readonly task: OnboardTask | undefined;
   readonly searchSummary: ToolsSearchSummary | undefined;
   readonly connectedToolkits: ReadonlyArray<string>;
 }): OnboardDemo | undefined => {
-  const task = params.task ?? findOnboardTaskForConnectedToolkits(params.connectedToolkits);
+  const connected = new Set(params.connectedToolkits.map(toolkit => toolkit.toLowerCase()));
+  const task =
+    params.task && connected.has(params.task.toolkit)
+      ? params.task
+      : findOnboardTaskForConnectedToolkits(params.connectedToolkits);
+  const firstSlug = params.searchSummary?.firstSlug;
+  const firstToolkit = params.searchSummary?.firstToolkit?.toLowerCase();
+  const searchDemo =
+    firstSlug && (!firstToolkit || connected.has(firstToolkit))
+      ? ({ slug: firstSlug, args: {}, kind: undefined } satisfies OnboardDemo)
+      : undefined;
+
   if (task) {
     const hint = task.demo.toolSlugHint;
     const slugs = params.searchSummary?.slugs ?? [];
     if (slugs.length === 0 || slugs.includes(hint)) {
       return { slug: hint, args: task.demo.sampleArgs, kind: task.demo.kind };
     }
-    const first = params.searchSummary?.firstSlug;
-    return first
-      ? { slug: first, args: {}, kind: undefined }
-      : { slug: hint, args: task.demo.sampleArgs, kind: task.demo.kind };
+    return searchDemo ?? { slug: hint, args: task.demo.sampleArgs, kind: task.demo.kind };
   }
-  const first = params.searchSummary?.firstSlug;
-  return first ? { slug: first, args: {}, kind: undefined } : undefined;
+  return searchDemo;
 };
 
 const executeDemo = (params: { readonly ui: TerminalUI; readonly demo: OnboardDemo }) =>
@@ -484,7 +481,6 @@ const offerFollowUpCreate = (params: {
 const runNonInteractiveOnboard = (params: {
   readonly ui: TerminalUI;
   readonly state: OnboardState;
-  readonly effectiveNextStep: OnboardGateStep | undefined;
   readonly invocationSkips: ReadonlyArray<OnboardSkippableStep>;
   readonly yes: boolean;
   readonly task: Option.Option<string>;
@@ -492,6 +488,8 @@ const runNonInteractiveOnboard = (params: {
 }) =>
   Effect.gen(function* () {
     const { ui, state } = params;
+    const connectSkipped = params.invocationSkips.includes('connect');
+    const executeSkipped = params.invocationSkips.includes('execute');
 
     const config = yield* ComposioCliUserConfig;
     const hostSkipped =
@@ -505,54 +503,61 @@ const runNonInteractiveOnboard = (params: {
       : Option.isSome(params.task)
         ? selectionFromTaskText(params.task.value)
         : undefined;
+    const connected = new Set(state.connectedToolkits.map(toolkit => toolkit.toLowerCase()));
 
-    if (params.effectiveNextStep === 'connect' && selection?.toolkit) {
-      yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STEP_STARTED, 'connect', {
-        toolkit: selection.toolkit,
-        task_id: selection.task?.id ?? FREE_TEXT_TASK_ID,
-        mode: 'non_interactive',
-      });
-      return yield* runConnectedAccountsLink({
-        toolkit: Option.some(selection.toolkit),
-        authConfig: Option.none(),
-        userId: Option.none(),
-        projectName: Option.none(),
-        noWait: true,
-        noBrowser: true,
-        alias: Option.none(),
-        list: false,
-        rootOnly: true,
-      });
-    }
-
-    if (params.effectiveNextStep === 'execute' && selection?.toolkit) {
-      const demo = resolveDemo({
-        task: selection.task,
-        searchSummary: undefined,
-        connectedToolkits: state.connectedToolkits.filter(toolkit => toolkit === selection.toolkit),
-      });
-      if (demo) {
-        yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STEP_STARTED, 'execute', {
-          slug: demo.slug,
+    if (state.loggedIn && selection?.toolkit) {
+      const target = selection.toolkit;
+      if (!connected.has(target) && !connectSkipped && !state.connectionCheckFailed) {
+        yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STEP_STARTED, 'connect', {
+          toolkit: target,
+          task_id: selection.task?.id ?? FREE_TEXT_TASK_ID,
           mode: 'non_interactive',
         });
-        yield* executeDemo({ ui, demo });
-        yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STEP_COMPLETED, 'execute', {
-          slug: demo.slug,
+        return yield* runConnectedAccountsLink({
+          toolkit: Option.some(target),
+          authConfig: Option.none(),
+          userId: Option.none(),
+          projectName: Option.none(),
+          noWait: true,
+          noBrowser: true,
+          alias: Option.none(),
+          list: false,
+          rootOnly: true,
         });
-        yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_COMPLETED);
-        return;
+      }
+      if (connected.has(target) && !executeSkipped && !state.hasExecuted) {
+        const demo = resolveDemo({
+          task: selection.task,
+          searchSummary: undefined,
+          connectedToolkits: [target],
+        });
+        if (demo) {
+          yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STEP_STARTED, 'execute', {
+            slug: demo.slug,
+            mode: 'non_interactive',
+          });
+          yield* executeDemo({ ui, demo });
+          yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STEP_COMPLETED, 'execute', {
+            slug: demo.slug,
+          });
+          yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_COMPLETED);
+          return;
+        }
       }
     }
 
-    const hint =
-      Option.isSome(params.task) && !selection?.toolkit
-        ? `No curated task matched. Run \`composio search "${params.task.value}"\` to find a toolkit, then \`composio onboard --toolkit <slug>\`.`
-        : undefined;
+    const hint = yield* Effect.sync((): string | undefined => {
+      if (selection?.toolkit && !connected.has(selection.toolkit) && state.connectionCheckFailed) {
+        return `Couldn't verify whether "${selection.toolkit}" is connected. Re-run \`composio onboard\` once the Composio API is reachable.`;
+      }
+      if (Option.isSome(params.task) && !selection?.toolkit) {
+        return `No curated task matched. Run \`composio search "${params.task.value}"\` to find a toolkit, then \`composio onboard --toolkit <slug>\`.`;
+      }
+      return undefined;
+    });
     yield* ui.output(
       buildStateJson({
         state,
-        effectiveNextStep: params.effectiveNextStep,
         invocationSkips: params.invocationSkips,
         hint,
       })
@@ -569,14 +574,20 @@ const runInteractiveOnboard = (params: {
 }) =>
   Effect.gen(function* () {
     const { ui } = params;
-    const skips = new Set<OnboardSkippableStep>(params.invocationSkips);
     const effectiveNext = (state: OnboardState) =>
-      resolveNextOnboardStep({ ...state, skippedSteps: [...skips] });
+      resolveOnboard({ facts: state, invocationSkips: params.invocationSkips }).nextStep;
+    const flagToolkit = Option.isSome(params.toolkit)
+      ? selectionFromToolkit(params.toolkit.value).task?.toolkit
+      : Option.isSome(params.task)
+        ? selectionFromTaskText(params.task.value).task?.toolkit
+        : undefined;
+    const connectSkipped = params.invocationSkips.includes('connect');
 
     yield* ui.intro('composio onboard');
 
     const config = yield* ComposioCliUserConfig;
-    const hostSkipped = skips.has('host') || config.data.onboard.skippedSteps.includes('host');
+    const hostSkipped =
+      params.invocationSkips.includes('host') || config.data.onboard.skippedSteps.includes('host');
     if (!hostSkipped) {
       yield* runHostStep({ ui, yes: params.yes, interactive: true });
     }
@@ -610,7 +621,12 @@ const runInteractiveOnboard = (params: {
 
     let selectedTask: OnboardTask | undefined;
     let searchSummary: ToolsSearchSummary | undefined;
-    if (effectiveNext(state) === 'connect') {
+    const namedNeedsConnect =
+      flagToolkit !== undefined &&
+      !state.connectedToolkits.includes(flagToolkit) &&
+      !connectSkipped &&
+      !state.connectionCheckFailed;
+    if (effectiveNext(state) === 'connect' || namedNeedsConnect) {
       const selection = yield* resolveInteractiveSelection({
         ui,
         toolkit: params.toolkit,
@@ -794,7 +810,6 @@ export const onboardCmd = Command.make(
         yield* emitStatus({
           ui,
           state,
-          effectiveNextStep: resolveNextOnboardStep({ ...state, skippedSteps: invocationSkips }),
           invocationSkips,
           emitHuman,
           emitJson,
@@ -814,10 +829,6 @@ export const onboardCmd = Command.make(
       }
 
       const state = yield* computeOnboardState;
-      const effectiveNextStep = resolveNextOnboardStep({
-        ...state,
-        skippedSteps: invocationSkips,
-      });
 
       if (state.complete) {
         yield* track(CLI_ANALYTICS_EVENTS.CLI_ONBOARD_STATUS_VIEWED, undefined, {
@@ -826,7 +837,6 @@ export const onboardCmd = Command.make(
         yield* emitStatus({
           ui,
           state,
-          effectiveNextStep,
           invocationSkips,
           emitHuman,
           emitJson,
@@ -844,7 +854,6 @@ export const onboardCmd = Command.make(
         return yield* runNonInteractiveOnboard({
           ui,
           state,
-          effectiveNextStep,
           invocationSkips,
           yes,
           task,

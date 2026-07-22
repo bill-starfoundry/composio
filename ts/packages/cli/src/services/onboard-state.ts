@@ -56,6 +56,64 @@ export const resolveNextOnboardStep = (facts: OnboardFacts): OnboardGateStep | u
   return undefined;
 };
 
+export interface OnboardResolution {
+  readonly completed: ReadonlyArray<OnboardGateStep>;
+  readonly remaining: ReadonlyArray<OnboardGateStep>;
+  readonly skipped: ReadonlyArray<OnboardSkippableStep>;
+  readonly persistedSkips: ReadonlyArray<OnboardSkippableStep>;
+  readonly nextStep: OnboardGateStep | undefined;
+  readonly complete: boolean;
+  readonly connectionUnknown: boolean;
+}
+
+const isGateStep = (value: string): value is OnboardGateStep =>
+  ONBOARD_GATE_STEPS.some(step => step === value);
+
+const gateSatisfied = (facts: OnboardFacts, gate: OnboardGateStep): boolean =>
+  gate === 'login' ? facts.loggedIn : gate === 'connect' ? facts.hasConnection : facts.hasExecuted;
+
+export const resolveOnboard = (params: {
+  readonly facts: OnboardFacts;
+  readonly invocationSkips: ReadonlyArray<OnboardSkippableStep>;
+}): OnboardResolution => {
+  const { facts } = params;
+  const persistedSkips = facts.skippedSteps.filter(isOnboardSkippableStep);
+  const hostSkipped = params.invocationSkips.includes('host') || persistedSkips.includes('host');
+  const effectiveSkips = new Set<OnboardSkippableStep>([
+    ...params.invocationSkips,
+    ...(hostSkipped ? (['host'] as const) : []),
+  ]);
+  const connectionUnknown = Boolean(facts.connectionCheckFailed) && !facts.hasConnection;
+  const isUnresolvableGate = (gate: OnboardGateStep): boolean =>
+    connectionUnknown && gate !== 'login';
+
+  const completed = ONBOARD_GATE_STEPS.filter(gate => gateSatisfied(facts, gate));
+  const nextStep = resolveNextOnboardStep({ ...facts, skippedSteps: params.invocationSkips });
+
+  const remaining: OnboardGateStep[] = [];
+  for (const gate of ONBOARD_GATE_STEPS) {
+    if (completed.includes(gate)) continue;
+    if (effectiveSkips.has(gate) || isUnresolvableGate(gate)) break;
+    remaining.push(gate);
+  }
+
+  const skipped = [...effectiveSkips].filter(step => {
+    if (!isGateStep(step)) return true;
+    if (completed.includes(step)) return false;
+    return !isUnresolvableGate(step);
+  });
+
+  return {
+    completed,
+    remaining,
+    skipped,
+    persistedSkips,
+    nextStep,
+    complete: isOnboardComplete(facts),
+    connectionUnknown,
+  };
+};
+
 interface ConnectionSnapshot {
   readonly toolkits: ReadonlyArray<string>;
   readonly count: number;
