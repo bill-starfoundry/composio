@@ -112,7 +112,7 @@ export const ONBOARD_TASKS: ReadonlyArray<OnboardTask> = [
     demo: {
       kind: 'read',
       toolSlugHint: 'GMAIL_FETCH_EMAILS',
-      sampleArgs: { max_results: 3 },
+      sampleArgs: { max_results: 3, verbose: false },
       summarize: data => {
         const list = findList(data, ['messages', 'emails', 'threads', 'items']);
         if (!list) return undefined;
