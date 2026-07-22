@@ -58,6 +58,47 @@ describe('demo summarize (human execute output)', () => {
     ).toBe("Created issue #7 'test' → https://github.com/acme/app/issues/7");
     expect(github.followUpCreate?.summarize?.({ no_number: true })).toBeUndefined();
   });
+
+  it('every curated read demo has a summarizer', () => {
+    for (const task of ONBOARD_TASKS) {
+      expect(task.demo.summarize, task.toolkit).toBeTypeOf('function');
+    }
+  });
+
+  it('summarizes list-shaped reads (gmail/slack/linear/notion)', () => {
+    expect(
+      findOnboardTaskByToolkit('gmail')!.demo.summarize?.({
+        messages: [{ subject: 'Hi' }, { subject: 'Yo' }],
+      })
+    ).toBe("Fetched 2 emails (latest: 'Hi')");
+    expect(findOnboardTaskByToolkit('slack')!.demo.summarize?.({ channels: [{}, {}, {}] })).toBe(
+      '3 channels'
+    );
+    expect(findOnboardTaskByToolkit('linear')!.demo.summarize?.({ issues: { nodes: [{}] } })).toBe(
+      '1 issue assigned'
+    );
+    expect(findOnboardTaskByToolkit('notion')!.demo.summarize?.({ results: [{}, {}] })).toBe(
+      '2 pages'
+    );
+  });
+});
+
+describe('demo tool args (small payloads)', () => {
+  it('gmail demo carries a small max_results limit', () => {
+    const gmail = findOnboardTaskByToolkit('gmail')!;
+    expect(gmail.demo.sampleArgs.max_results).toBe(3);
+  });
+
+  it('every list-returning demo passes a small page-size / limit arg', () => {
+    const limitKeys = ['max_results', 'limit', 'first', 'page_size'];
+    // the github profile read returns a single object; the other four return lists
+    for (const toolkit of ['gmail', 'slack', 'linear', 'notion']) {
+      const args = findOnboardTaskByToolkit(toolkit)!.demo.sampleArgs;
+      const limit = limitKeys.map(key => args[key]).find(value => typeof value === 'number');
+      expect(limit, `${toolkit} demo args: ${JSON.stringify(args)}`).toBeTypeOf('number');
+      expect(limit as number, toolkit).toBeLessThanOrEqual(10);
+    }
+  });
 });
 
 describe('followUpCreate (opt-in reversible create)', () => {

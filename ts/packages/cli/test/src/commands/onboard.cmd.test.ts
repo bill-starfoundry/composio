@@ -133,6 +133,50 @@ describe('CLI: composio onboard (non-interactive contract)', () => {
           // the forced raw JSON result must NOT be emitted in interactive mode
           expect(output).not.toContain('"login"');
           expect(output).not.toContain('"successful"');
+          // end-of-onboarding soft nudge to composio setup
+          expect(output).toContain('composio setup');
+        })
+    );
+  });
+
+  const bigEmails = [
+    { subject: 'Hello there', snippet: 'the quick brown fox jumps over the lazy dog '.repeat(40) },
+    ...Array.from({ length: 200 }, (_, i) => ({
+      subject: `Email ${i}`,
+      snippet: 'lorem ipsum dolor sit amet consectetur adipiscing elit '.repeat(40),
+    })),
+  ];
+
+  layer(
+    TestLive({
+      baseConfigProvider: loggedInConfigProvider,
+      connectedAccountsData: { items: [gmailAccount] },
+      toolsExecutor: {
+        respondWith: {
+          successful: true,
+          data: { messages: bigEmails },
+          error: null,
+          logId: 'log_gmail',
+        },
+      },
+      terminalUI: interactiveUI,
+    })
+  )('connected-first menu + no file spill', it => {
+    it.scoped(
+      '[Given] only gmail connected [Then] the menu picks gmail and a huge result never spills to a file',
+      () =>
+        Effect.gen(function* () {
+          yield* loginTestOrg;
+          yield* cli(['onboard']);
+          const output = (yield* MockConsole.getLines({ stripAnsi: true })).join('\n');
+          // connected-first ordering: gmail (connected) is chosen over github (first in the registry)
+          expect(output).toContain('gmail already connected');
+          // gmail summarizer line
+          expect(output).toContain("Fetched 201 emails (latest: 'Hello there')");
+          // the large payload must NOT be written to a temp file
+          expect(output).not.toContain('Response stored in');
+          // and the raw snippet text must not be dumped
+          expect(output).not.toContain('lorem ipsum');
         })
     );
   });

@@ -870,7 +870,7 @@ const SUBCOMMAND_HELP: Record<string, SubcommandHelp | TaggedValue<SubcommandHel
     options: [
       { name: '--toolkit <text>', description: 'Pick a starter toolkit without the menu' },
       { name: '--task <text>', description: 'Pick a starter task without the menu' },
-      { name: '--skip <step>', description: 'Skip a step (host, login, connect, execute)' },
+      { name: '--skip <step>', description: 'Skip a step (login, connect, execute)' },
     ],
     flags: [
       { name: '--status', description: 'Show onboarding status and exit without changes' },

@@ -8,6 +8,26 @@ const asRecord = (value: unknown): Record<string, unknown> =>
 const str = (value: unknown): string | undefined =>
   typeof value === 'string' && value.length > 0 ? value : undefined;
 
+const asArray = (value: unknown): ReadonlyArray<unknown> | undefined =>
+  Array.isArray(value) ? value : undefined;
+
+const findList = (
+  data: Record<string, unknown>,
+  keys: ReadonlyArray<string>
+): ReadonlyArray<unknown> | undefined => {
+  const d = { ...data, ...asRecord(data.data) };
+  for (const key of keys) {
+    const direct = asArray(d[key]);
+    if (direct) return direct;
+    const nested = asRecord(d[key]);
+    const nodes = asArray(nested.nodes) ?? asArray(nested.results);
+    if (nodes) return nodes;
+  }
+  return undefined;
+};
+
+const plural = (count: number, noun: string): string => `${count} ${noun}${count === 1 ? '' : 's'}`;
+
 export interface OnboardTaskDemo {
   readonly kind: OnboardDemoKind;
   readonly toolSlugHint: string;
@@ -92,7 +112,14 @@ export const ONBOARD_TASKS: ReadonlyArray<OnboardTask> = [
     demo: {
       kind: 'read',
       toolSlugHint: 'GMAIL_FETCH_EMAILS',
-      sampleArgs: { max_results: 5 },
+      sampleArgs: { max_results: 3 },
+      summarize: data => {
+        const list = findList(data, ['messages', 'emails', 'threads', 'items']);
+        if (!list) return undefined;
+        const first = asRecord(list[0]);
+        const subject = str(first.subject) ?? str(asRecord(first.payload).subject);
+        return `Fetched ${plural(list.length, 'email')}${subject ? ` (latest: '${subject}')` : ''}`;
+      },
     },
   },
   {
@@ -105,6 +132,10 @@ export const ONBOARD_TASKS: ReadonlyArray<OnboardTask> = [
       kind: 'read',
       toolSlugHint: 'SLACK_LIST_ALL_CHANNELS',
       sampleArgs: { limit: 10 },
+      summarize: data => {
+        const list = findList(data, ['channels', 'items']);
+        return list ? plural(list.length, 'channel') : undefined;
+      },
     },
   },
   {
@@ -116,7 +147,11 @@ export const ONBOARD_TASKS: ReadonlyArray<OnboardTask> = [
     demo: {
       kind: 'read',
       toolSlugHint: 'LINEAR_LIST_LINEAR_ISSUES',
-      sampleArgs: {},
+      sampleArgs: { first: 5 },
+      summarize: data => {
+        const list = findList(data, ['issues', 'nodes', 'items']);
+        return list ? `${plural(list.length, 'issue')} assigned` : undefined;
+      },
     },
     followUpCreate: {
       kind: 'reversible_create',
@@ -145,7 +180,11 @@ export const ONBOARD_TASKS: ReadonlyArray<OnboardTask> = [
     demo: {
       kind: 'read',
       toolSlugHint: 'NOTION_SEARCH_NOTION_PAGE',
-      sampleArgs: { query: '' },
+      sampleArgs: { query: '', page_size: 5 },
+      summarize: data => {
+        const list = findList(data, ['results', 'pages', 'items']);
+        return list ? plural(list.length, 'page') : undefined;
+      },
     },
   },
 ];

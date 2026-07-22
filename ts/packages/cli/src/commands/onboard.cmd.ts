@@ -87,6 +87,8 @@ type OnboardEventName =
 const track = (name: OnboardEventName, step?: string, properties?: Record<string, unknown>) =>
   trackCliEventEffect(getOnboardFunnelEvent({ name, step, properties }));
 
+const SETUP_NUDGE = 'Tip: use Composio inside Claude Code or Codex — run `composio setup`.';
+
 const stateLabel = (state: OnboardState): string => {
   if (state.complete) return 'complete';
   if (!state.loggedIn) return 'logged_out';
@@ -192,6 +194,7 @@ const emitStatus = (params: {
           'Run a script:\n> composio run \'const me = await execute("GITHUB_GET_THE_AUTHENTICATED_USER"); console.log(me)\'',
         ].join('\n')
       );
+      yield* ui.log.info(SETUP_NUDGE);
       yield* ui.outro("You're all set!");
     } else if (next) {
       yield* ui.outro(`Next: ${next.cmd}`);
@@ -239,10 +242,22 @@ const selectionFromTaskText = (text: string): TaskSelection => {
     : { task: undefined, toolkit: undefined, query: text.trim() };
 };
 
+const orderTasksConnectedFirst = (
+  connectedToolkits: ReadonlyArray<string>
+): ReadonlyArray<OnboardTask> => {
+  const connected = new Set(connectedToolkits.map(toolkit => toolkit.toLowerCase()));
+  const isConnected = (task: OnboardTask) => connected.has(task.toolkit);
+  return [
+    ...ONBOARD_TASKS.filter(isConnected),
+    ...ONBOARD_TASKS.filter(task => !isConnected(task)),
+  ];
+};
+
 const resolveInteractiveSelection = (params: {
   readonly ui: TerminalUI;
   readonly toolkit: Option.Option<string>;
   readonly task: Option.Option<string>;
+  readonly connectedToolkits: ReadonlyArray<string>;
 }) =>
   Effect.gen(function* () {
     if (Option.isSome(params.toolkit)) {
@@ -252,11 +267,14 @@ const resolveInteractiveSelection = (params: {
       return selectionFromTaskText(params.task.value);
     }
 
+    const connected = new Set(params.connectedToolkits.map(toolkit => toolkit.toLowerCase()));
     const choice = yield* params.ui.select<string>('What do you want to try first?', [
-      ...ONBOARD_TASKS.map(candidate => ({
+      ...orderTasksConnectedFirst(params.connectedToolkits).map(candidate => ({
         value: candidate.id,
         label: candidate.label,
-        hint: `connects ${candidate.toolkit} via OAuth`,
+        hint: connected.has(candidate.toolkit)
+          ? 'connected'
+          : `connects ${candidate.toolkit} via OAuth`,
       })),
       {
         value: FREE_TEXT_TASK_ID,
@@ -371,6 +389,7 @@ const executeDemo = (params: {
     skipToolParamsCheck: false,
     skipChecks: false,
     quiet: params.quiet,
+    inlineOnly: true,
     onSuccess: params.quiet
       ? result => showExecuteSummary(params.ui, params.demo.summarize, result)
       : undefined,
@@ -441,6 +460,7 @@ const offerFollowUpCreate = (params: {
       skipToolParamsCheck: false,
       skipChecks: false,
       quiet: true,
+      inlineOnly: true,
       onSuccess: result => showExecuteSummary(ui, followUp.summarize, result),
     }).pipe(
       Effect.tap(() =>
@@ -567,6 +587,7 @@ const runInteractiveOnboard = (params: {
         scope: 'user',
         noBrowser: false,
         skipOrgProjectPicker: params.yes,
+        embedded: true,
       });
       const ctx = yield* ComposioUserContext;
       if (!ctx.isLoggedIn()) {
@@ -589,6 +610,7 @@ const runInteractiveOnboard = (params: {
       ui,
       toolkit: params.toolkit,
       task: params.task,
+      connectedToolkits: state.connectedToolkits,
     });
     if (!selection) {
       yield* ui.outro(
@@ -728,6 +750,7 @@ const runInteractiveOnboard = (params: {
         commandHintStep('Execute anything', 'root.execute'),
       ].join('\n')
     );
+    yield* ui.log.info(SETUP_NUDGE);
     yield* ui.outro("You're all set!");
   });
 
