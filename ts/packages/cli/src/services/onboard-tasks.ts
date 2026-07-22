@@ -1,9 +1,18 @@
 export type OnboardDemoKind = 'read' | 'reversible_create';
 
+export type OnboardExecuteSummarizer = (data: Record<string, unknown>) => string | undefined;
+
+const asRecord = (value: unknown): Record<string, unknown> =>
+  value !== null && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+
+const str = (value: unknown): string | undefined =>
+  typeof value === 'string' && value.length > 0 ? value : undefined;
+
 export interface OnboardTaskDemo {
   readonly kind: OnboardDemoKind;
   readonly toolSlugHint: string;
   readonly sampleArgs: Readonly<Record<string, unknown>>;
+  readonly summarize?: OnboardExecuteSummarizer;
 }
 
 export interface OnboardFollowUpCreateArg {
@@ -18,6 +27,7 @@ export interface OnboardFollowUpCreate {
   readonly toolSlugHint: string;
   readonly requiredArgs: ReadonlyArray<OnboardFollowUpCreateArg>;
   readonly fixedArgs?: Readonly<Record<string, unknown>>;
+  readonly summarize?: OnboardExecuteSummarizer;
 }
 
 export interface OnboardTask {
@@ -43,6 +53,12 @@ export const ONBOARD_TASKS: ReadonlyArray<OnboardTask> = [
       kind: 'read',
       toolSlugHint: 'GITHUB_GET_THE_AUTHENTICATED_USER',
       sampleArgs: {},
+      summarize: data => {
+        const d = { ...data, ...asRecord(data.data) };
+        const login = str(d.login);
+        const name = str(d.name);
+        return login ? `You're @${login}${name ? ` (${name})` : ''}` : undefined;
+      },
     },
     followUpCreate: {
       kind: 'reversible_create',
@@ -57,6 +73,14 @@ export const ONBOARD_TASKS: ReadonlyArray<OnboardTask> = [
           placeholder: 'e.g. Test issue from composio onboard',
         },
       ],
+      summarize: data => {
+        const d = { ...data, ...asRecord(data.data) };
+        const number = typeof d.number === 'number' ? d.number : undefined;
+        const title = str(d.title);
+        const url = str(d.html_url);
+        if (number === undefined) return undefined;
+        return `Created issue #${number}${title ? ` '${title}'` : ''}${url ? ` → ${url}` : ''}`;
+      },
     },
   },
   {

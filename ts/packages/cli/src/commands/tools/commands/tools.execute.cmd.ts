@@ -607,6 +607,17 @@ const emitExecuteFailureTelemetry = (params: {
 
 const writeExecuteStdout = (ui: TerminalUI, data: string) => ui.output(data, { force: true });
 
+const emitExecuteSuccess = (
+  params: {
+    readonly ui: TerminalUI;
+    readonly quiet?: boolean;
+    readonly onSuccess?: (result: ToolExecuteResponse) => Effect.Effect<void>;
+  },
+  result: ToolExecuteResponse,
+  json: string
+) =>
+  params.quiet ? (params.onSuccess?.(result) ?? Effect.void) : writeExecuteStdout(params.ui, json);
+
 export const showToolsExecuteInputHelp = (toolSlug: string) =>
   Effect.gen(function* () {
     if (!(yield* requireAuth)) return;
@@ -881,6 +892,8 @@ type RunToolsExecuteParams = {
   skipConnectionCheck: boolean;
   skipToolParamsCheck: boolean;
   skipChecks: boolean;
+  quiet?: boolean;
+  onSuccess?: (result: ToolExecuteResponse) => Effect.Effect<void>;
 };
 
 type SharedRunToolsExecuteParams = Omit<RunToolsExecuteParams, 'slug' | 'data' | 'file'>;
@@ -1246,6 +1259,8 @@ const runExecuteWithSpinner = (params: {
   readonly executeOutputDir?: string;
   readonly skipToolParamsCheck: boolean;
   readonly skipChecks: boolean;
+  readonly quiet?: boolean;
+  readonly onSuccess?: (result: ToolExecuteResponse) => Effect.Effect<void>;
 }) =>
   Effect.gen(function* () {
     const verificationDisabled =
@@ -1442,7 +1457,11 @@ const runExecuteWithSpinner = (params: {
           yield* params.ui.log.message(
             `Response stored in ${output.summary.outputFilePath} (${output.summary.tokenCount} tokens)`
           );
-          yield* writeExecuteStdout(params.ui, JSON.stringify(output.summary, ciRedactReplacer, 2));
+          yield* emitExecuteSuccess(
+            params,
+            result,
+            JSON.stringify(output.summary, ciRedactReplacer, 2)
+          );
           yield* appendCliSessionHistory({
             ...executeSessionHistoryScope(params.resolvedProject),
             entry: {
@@ -1459,7 +1478,7 @@ const runExecuteWithSpinner = (params: {
           return;
         }
 
-        yield* writeExecuteStdout(params.ui, output.json);
+        yield* emitExecuteSuccess(params, result, output.json);
         yield* appendCliSessionHistory({
           ...executeSessionHistoryScope(params.resolvedProject),
           entry: {
@@ -1549,6 +1568,8 @@ export const runToolsExecute = (params: RunToolsExecuteParams) =>
       executeParams: context.executeParams,
       skipToolParamsCheck: params.skipToolParamsCheck,
       skipChecks: params.skipChecks,
+      quiet: params.quiet,
+      onSuccess: params.onSuccess,
     });
   });
 
