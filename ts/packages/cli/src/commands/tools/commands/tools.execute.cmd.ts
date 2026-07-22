@@ -382,12 +382,17 @@ const perfDebugLog = makePerfDebugLogger();
 const prepareExecuteOutput = (
   toolSlug: string,
   result: ToolExecuteResponse,
-  sharedDirectory?: string
+  sharedDirectory?: string,
+  inlineOnly?: boolean
 ) =>
   Effect.gen(function* () {
     const json = serializeExecuteOutput(result);
     const tokenCount = getExecuteOutputEncoder().encode(json).length;
-    if (tokenCount <= EXECUTE_INLINE_OUTPUT_TOKEN_THRESHOLD || !shouldStoreLargeExecuteOutput()) {
+    if (
+      inlineOnly ||
+      tokenCount <= EXECUTE_INLINE_OUTPUT_TOKEN_THRESHOLD ||
+      !shouldStoreLargeExecuteOutput()
+    ) {
       return {
         kind: 'inline',
         json,
@@ -893,6 +898,7 @@ type RunToolsExecuteParams = {
   skipToolParamsCheck: boolean;
   skipChecks: boolean;
   quiet?: boolean;
+  inlineOnly?: boolean;
   onSuccess?: (result: ToolExecuteResponse) => Effect.Effect<void>;
 };
 
@@ -1245,6 +1251,64 @@ const executeSessionHistoryScope = (resolvedProject: ResolvedExecuteContext['res
       }
     : {};
 
+const emitExecuteSuccessOutput = (
+  params: {
+    readonly ui: TerminalUI;
+    readonly slug: string;
+    readonly args: Record<string, unknown>;
+    readonly resolvedProject: ResolvedExecuteContext['resolvedProject'];
+    readonly executeOutputDir?: string;
+    readonly quiet?: boolean;
+    readonly inlineOnly?: boolean;
+    readonly onSuccess?: (result: ToolExecuteResponse) => Effect.Effect<void>;
+  },
+  result: ToolExecuteResponse
+) =>
+  Effect.gen(function* () {
+    const output = yield* prepareExecuteOutput(
+      params.slug,
+      result,
+      params.executeOutputDir,
+      params.inlineOnly
+    );
+    if (output.kind === 'file') {
+      yield* params.ui.log.message(
+        `Response stored in ${output.summary.outputFilePath} (${output.summary.tokenCount} tokens)`
+      );
+      yield* emitExecuteSuccess(
+        params,
+        result,
+        JSON.stringify(output.summary, ciRedactReplacer, 2)
+      );
+      yield* appendCliSessionHistory({
+        ...executeSessionHistoryScope(params.resolvedProject),
+        entry: {
+          command: 'execute',
+          status: 'success',
+          slug: params.slug,
+          arguments: params.args,
+          storedInFile: true,
+          outputFilePath: output.summary.outputFilePath,
+          tokenCount: output.summary.tokenCount,
+          logId: result.logId,
+        },
+      }).pipe(Effect.catchAll(() => Effect.void));
+      return;
+    }
+    yield* emitExecuteSuccess(params, result, output.json);
+    yield* appendCliSessionHistory({
+      ...executeSessionHistoryScope(params.resolvedProject),
+      entry: {
+        command: 'execute',
+        status: 'success',
+        slug: params.slug,
+        arguments: params.args,
+        storedInFile: false,
+        logId: result.logId,
+      },
+    }).pipe(Effect.catchAll(() => Effect.void));
+  });
+
 const runExecuteWithSpinner = (params: {
   readonly slug: string;
   readonly surface: 'root' | 'dev';
@@ -1260,6 +1324,7 @@ const runExecuteWithSpinner = (params: {
   readonly skipToolParamsCheck: boolean;
   readonly skipChecks: boolean;
   readonly quiet?: boolean;
+  readonly inlineOnly?: boolean;
   readonly onSuccess?: (result: ToolExecuteResponse) => Effect.Effect<void>;
 }) =>
   Effect.gen(function* () {
@@ -1452,44 +1517,7 @@ const runExecuteWithSpinner = (params: {
             `The tool executed successfully but the response may contain an error: ${inBandWarning}`
           );
         }
-        const output = yield* prepareExecuteOutput(params.slug, result, params.executeOutputDir);
-        if (output.kind === 'file') {
-          yield* params.ui.log.message(
-            `Response stored in ${output.summary.outputFilePath} (${output.summary.tokenCount} tokens)`
-          );
-          yield* emitExecuteSuccess(
-            params,
-            result,
-            JSON.stringify(output.summary, ciRedactReplacer, 2)
-          );
-          yield* appendCliSessionHistory({
-            ...executeSessionHistoryScope(params.resolvedProject),
-            entry: {
-              command: 'execute',
-              status: 'success',
-              slug: params.slug,
-              arguments: params.args,
-              storedInFile: true,
-              outputFilePath: output.summary.outputFilePath,
-              tokenCount: output.summary.tokenCount,
-              logId: result.logId,
-            },
-          }).pipe(Effect.catchAll(() => Effect.void));
-          return;
-        }
-
-        yield* emitExecuteSuccess(params, result, output.json);
-        yield* appendCliSessionHistory({
-          ...executeSessionHistoryScope(params.resolvedProject),
-          entry: {
-            command: 'execute',
-            status: 'success',
-            slug: params.slug,
-            arguments: params.args,
-            storedInFile: false,
-            logId: result.logId,
-          },
-        }).pipe(Effect.catchAll(() => Effect.void));
+        yield* emitExecuteSuccessOutput(params, result);
       })
     );
   });
@@ -1569,6 +1597,7 @@ export const runToolsExecute = (params: RunToolsExecuteParams) =>
       skipToolParamsCheck: params.skipToolParamsCheck,
       skipChecks: params.skipChecks,
       quiet: params.quiet,
+      inlineOnly: params.inlineOnly,
       onSuccess: params.onSuccess,
     });
   });
