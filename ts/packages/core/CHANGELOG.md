@@ -1,5 +1,11 @@
 # @composio/core
 
+## 0.14.1
+
+### Patch Changes
+
+- 2f63fe5: Guard Tool Router session URL uploads against SSRF, revalidate redirect targets, and enforce a streamed 100 MiB response limit across TypeScript URL upload paths.
+
 ## 0.14.0
 
 ### Minor Changes
